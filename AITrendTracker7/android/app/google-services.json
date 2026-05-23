@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1056135085469",
+    "project_id": "aitrendtracker-74f73",
+    "storage_bucket": "aitrendtracker-74f73.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1056135085469:android:73783a9e10fc6cb1880374",
+        "android_client_info": {
+          "package_name": "com.aitrendtracker7"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1056135085469-btmk4plvm0me1dfark69nge12oakd241.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aitrendtracker7",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "1056135085469-m7ofk9b3d3m82koef2bmgor2ld6avmf2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCjdl1SkSHXFSrHUhqfX7YYe-MFafGx3d4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1056135085469-m7ofk9b3d3m82koef2bmgor2ld6avmf2.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
