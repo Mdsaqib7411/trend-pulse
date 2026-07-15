@@ -1,19 +1,20 @@
+![React Native](https://img.shields.io/badge/React_Native-CLI-61DAFB?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Node.js](https://img.shields.io/badge/Node.js-339933?logo=node.js&logoColor=white) ![MongoDB](https://img.shields.io/badge/MongoDB-47A248?logo=mongodb&logoColor=white)
 # TrendPulse — AI-Powered Social Media Trend Tracker
 
 An AI-powered mobile application that analyzes real-time social media trends, built with React Native CLI and a Node.js/Express/MongoDB backend, using the Gemini API for intelligent categorization and prediction.
 
 ## 📱 Demo
 
-<!-- Add a screen recording GIF or screenshots here — this matters most to recruiters -->
-<!-- Example: ![demo](./assets/demo.gif) -->
+> 🚧 Screenshots and demo video will be added soon.
 
 ## ✨ Features
 
-- Real-time social media trend analysis and tracking
-- AI-based categorization and auto-summaries using the Gemini API
-- Trend prediction based on historical patterns
-- Responsive, native mobile UI built with React Native CLI
-- RESTful API integration between frontend and backend
+- 📈 Real-time social media trend tracking
+- 🤖 AI-powered categorization and summaries using Gemini API
+- 🔮 Trend prediction based on historical data
+- 📱 Cross-platform mobile application built with React Native CLI
+- 🔗 REST API integration with Node.js & Express.js backend
+- ⚡ Responsive and modern mobile UI
 
 ## 🛠️ Tech Stack
 
@@ -57,8 +58,8 @@ npx react-native run-android
 
 ```
 trend-pulse/
-├── mobile/          # React Native frontend
-├── backend/         # Node.js + Express API
+├── AItrendtracker7/          # React Native frontend
+├── backend/                  # Node.js + Express API
 └── README.md
 ```
 
@@ -66,9 +67,10 @@ trend-pulse/
 
 This project is open source and available under the MIT License.
 
-## 👤 Author
+## 👨‍💻 Author
 
 **Md Saqib Hussain**
-- GitHub: [@Mdsaqib7411](https://github.com/Mdsaqib7411)
-- LinkedIn: [Md Saqib Hussain](https://linkedin.com/in/md-saqib-hussain-7411l7295)
-- Portfolio: [mdsaqibhussain.vercel.app](https://mdsaqibhussain.vercel.app)
+
+- 🌐 Portfolio: https://mdsaqibhussain.vercel.app
+- 💼 LinkedIn: https://linkedin.com/in/md-saqib-hussain-7411l7295
+- 💻 GitHub: https://github.com/Mdsaqib7411
