@@ -54,43 +54,40 @@ mongoose.connect(process.env.MONGO_URI)
     require('./src/queues/workers/trendWorker');
     require('./src/jobs/trendAggregatorJob');
     require('./src/jobs/intelligenceScheduler');
-})
 
-        // Layer 3: Hourly geo trend emerging scan
-        cron.schedule('0 * * * *', async () => {
-            logger.info('[Cron] Starting hourly geo trend scan...');
-            try {
-                const count = await geoTrendEngine.scanForEmergingTrends();
-                logger.info(`[Cron] Geo scan complete. ${count} emerging trends flagged.`);
-            } catch (err) {
-                logger.error('[Cron] Geo scan failed: %o', { error: err.message, stack: err.stack });
-            }
-        });
-        logger.info('[Cron] Geo trend scan scheduled (hourly).');
-
-        // Run startup diagnostics after 1.5 seconds to let connections settle
-        setTimeout(() => {
-            const mongoConnected = mongoose.connection.readyState === 1;
-            const redisConnected = isRedisAvailable();
-            const geminiConfigured = !!process.env.GEMINI_API_KEY;
-            const newsConfigured = !!process.env.NEWS_API_KEY;
-            const youtubeConfigured = !!process.env.YOUTUBE_API_KEY;
-
-            console.log('\n======================================================');
-            console.log('         TRENDPULSE - STARTUP DIAGNOSTICS REPORT      ');
-            console.log('======================================================');
-            console.log(`  MongoDB:    ${mongoConnected ? '✅ Connected' : '❌ Disconnected'}`);
-            console.log(`  Redis:      ${redisConnected ? '✅ Connected (High-Performance Active)' : '⚠️ Offline (Memory Fallback Active)'}`);
-            console.log(`  Gemini:     ${geminiConfigured ? '✅ Configured (Chat/Analysis Active)' : '❌ Missing API Key'}`);
-            console.log(`  NewsAPI:    ${newsConfigured ? '✅ Configured (News Fetch Active)' : '❌ Missing API Key'}`);
-            console.log(`  YouTube:    ${youtubeConfigured ? '✅ Configured (Video Fetch Active)' : '❌ Missing API Key'}`);
-            console.log('======================================================\n');
-        }, 1500);
+    // Layer 3: Hourly geo trend emerging scan
+    cron.schedule('0 * * * *', async () => {
+        logger.info('[Cron] Starting hourly geo trend scan...');
+        try {
+            const count = await geoTrendEngine.scanForEmergingTrends();
+            logger.info(`[Cron] Geo scan complete. ${count} emerging trends flagged.`);
+        } catch (err) {
+            logger.error('[Cron] Geo scan failed: %o', { error: err.message, stack: err.stack });
+        }
     });
+    logger.info('[Cron] Geo trend scan scheduled (hourly).');
+
+    // Run startup diagnostics after 1.5 seconds to let connections settle
+    setTimeout(() => {
+        const mongoConnected = mongoose.connection.readyState === 1;
+        const redisConnected = isRedisAvailable();
+        const geminiConfigured = !!process.env.GEMINI_API_KEY;
+        const newsConfigured = !!process.env.NEWS_API_KEY;
+        const youtubeConfigured = !!process.env.YOUTUBE_API_KEY;
+
+        console.log('\n======================================================');
+        console.log('         TRENDPULSE - STARTUP DIAGNOSTICS REPORT      ');
+        console.log('======================================================');
+        console.log(`  MongoDB:    ${mongoConnected ? '✅ Connected' : '❌ Disconnected'}`);
+        console.log(`  Redis:      ${redisConnected ? '✅ Connected (High-Performance Active)' : '⚠️ Offline (Memory Fallback Active)'}`);
+        console.log(`  Gemini:     ${geminiConfigured ? '✅ Configured (Chat/Analysis Active)' : '❌ Missing API Key'}`);
+        console.log(`  NewsAPI:    ${newsConfigured ? '✅ Configured (News Fetch Active)' : '❌ Missing API Key'}`);
+        console.log(`  YouTube:    ${youtubeConfigured ? '✅ Configured (Video Fetch Active)' : '❌ Missing API Key'}`);
+        console.log('======================================================\n');
+    }, 1500);
 })
 .catch((err) => {
     logger.error('[Server] MongoDB connection error: %o', { error: err.message, stack: err.stack });
-    process.exit(1);
 });
 
 // Process-Level Exception and Rejection Protections
