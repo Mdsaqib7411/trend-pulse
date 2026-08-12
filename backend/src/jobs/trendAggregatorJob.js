@@ -8,20 +8,28 @@ const categoriesToFetch = [
     'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'
 ];
 
-// Run every 5 minutes
-cron.schedule('*/5 * * * *', async () => {
-    console.log('[Cron] Triggering trend aggregation pulse...');
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Run every 15 minutes with staggered delays to prevent API quota thundering herds
+cron.schedule('*/15 * * * *', async () => {
+    console.log('[Cron] Triggering staggered trend aggregation pulse...');
     
-    // Create a deterministic time block (e.g., 10:05, 10:10)
+    // Create a deterministic time block
     const now = new Date();
-    const timeBlock = `${now.getFullYear()}${now.getMonth()}${now.getDate()}_${now.getHours()}${Math.floor(now.getMinutes() / 5)}`;
+    const timeBlock = `${now.getFullYear()}${now.getMonth()}${now.getDate()}_${now.getHours()}${Math.floor(now.getMinutes() / 15)}`;
     
-    for (const category of categoriesToFetch) {
-        // Deterministic jobId prevents duplicate background fetching
+    for (let i = 0; i < categoriesToFetch.length; i++) {
+        const category = categoriesToFetch[i];
+        
         await trendQueue.add('fetchTrends', { category }, { 
             jobId: `fetch_trend_${category.replace(/\s+/g, '_')}_${timeBlock}` 
         });
+
+        // Stagger processing by 4 seconds between categories
+        if (i < categoriesToFetch.length - 1) {
+            await sleep(4000);
+        }
     }
 });
 
-console.log('[Cron] Trend Aggregator Job initialized.');
+console.log('[Cron] Trend Aggregator Job initialized (Staggered 15-min cadence).');
