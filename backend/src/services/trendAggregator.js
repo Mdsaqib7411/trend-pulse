@@ -38,12 +38,32 @@ class TrendAggregator {
 
         console.log(`[TrendAggregator] Fetching fresh trends for category: ${category} ...`);
 
-        // 1. Fetch from all sources concurrently with fault tolerance
+        // 1. Fetch from all sources with Provider-Level Concurrency & Intra-Category Staggering
+        const fetchNewsAPI = (async () => {
+            await this.acquireProviderSlot('newsapi', 200);
+            return this.fetchFromNewsAPI(category);
+        })();
+
+        const fetchReddit = (async () => {
+            await this.acquireProviderSlot('reddit', 300);
+            return this.fetchFromReddit(category);
+        })();
+
+        const fetchGNews = (async () => {
+            await this.acquireProviderSlot('gnews', 500);
+            return this.fetchFromGNews(category);
+        })();
+
+        const fetchYouTube = (async () => {
+            await this.acquireProviderSlot('youtube', 300);
+            return this.fetchFromYouTube(category);
+        })();
+
         const results = await Promise.allSettled([
-            this.fetchFromNewsAPI(category),
-            this.fetchFromReddit(category),
-            this.fetchFromGNews(category),
-            this.fetchFromYouTube(category)
+            fetchNewsAPI,
+            fetchReddit,
+            fetchGNews,
+            fetchYouTube
         ]);
 
         let combined = [];
@@ -285,6 +305,23 @@ class TrendAggregator {
     redditInFlight = new Map();
     youtubeCache = new Map();
     youtubeInFlight = new Map();
+    lastProviderCall = new Map();
+
+    /**
+     * Provider-Level Concurrency & Rate Throttler:
+     * Ensures minimum time spacing between requests to the SAME external provider across any category.
+     */
+    async acquireProviderSlot(providerName, minIntervalMs = 300) {
+        const lastCall = this.lastProviderCall.get(providerName) || 0;
+        const now = Date.now();
+        const elapsed = now - lastCall;
+
+        if (elapsed < minIntervalMs) {
+            const waitTime = minIntervalMs - elapsed;
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+        this.lastProviderCall.set(providerName, Date.now());
+    }
 
     /**
      * Fallback: Fetch breaking news directly from Google News RSS feed (0 API keys, 0 quota limits)
@@ -370,46 +407,47 @@ class TrendAggregator {
                 // Reddit Compliant User-Agent string
                 const userAgent = process.env.REDDIT_USER_AGENT || 'android:com.trendpulse.app:v1.0.0 (by /u/mdsaqibhussain123)';
 
-                const promises = subreddits.map(sub =>
-                    axios.get(`https://www.reddit.com/r/${sub}/.rss`, {
-                        headers: { 'User-Agent': userAgent },
-                        timeout: 4000
-                    })
-                );
-
-                const results = await Promise.allSettled(promises);
-
                 let redditPosts = [];
-                results.forEach((res, index) => {
-                    if (res.status === 'fulfilled' && typeof res.value.data === 'string') {
-                        const xml = res.value.data;
-                        const entries = xml.split('<entry>').slice(1);
-                        const posts = entries.slice(0, 3).map(entry => {
-                            const titleMatch = entry.match(/<title>(.*?)<\/title>/i);
-                            const linkMatch = entry.match(/href="([^"]+)"/i);
-                            const dateMatch = entry.match(/<updated>(.*?)<\/updated>/i);
+                // Sequential staggered fetches across subreddits (200ms delay) to prevent concurrent rate limit bursts
+                for (let i = 0; i < subreddits.length; i++) {
+                    const sub = subreddits[i];
+                    try {
+                        await this.acquireProviderSlot('reddit', 250);
+                        const res = await axios.get(`https://www.reddit.com/r/${sub}/.rss`, {
+                            headers: { 'User-Agent': userAgent },
+                            timeout: 4000
+                        });
 
-                            const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, '').trim() : '';
-                            const url = linkMatch ? linkMatch[1] : `https://reddit.com/r/${subreddits[index]}`;
-                            const pubDate = dateMatch ? new Date(dateMatch[1]) : new Date();
+                        if (typeof res.data === 'string') {
+                            const xml = res.data;
+                            const entries = xml.split('<entry>').slice(1);
+                            const posts = entries.slice(0, 3).map(entry => {
+                                const titleMatch = entry.match(/<title>(.*?)<\/title>/i);
+                                const linkMatch = entry.match(/href="([^"]+)"/i);
+                                const dateMatch = entry.match(/<updated>(.*?)<\/updated>/i);
 
-                            return {
-                                title,
-                                description: `Trending post on r/${subreddits[index]}`,
-                                url,
-                                image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1000',
-                                source: `r/${subreddits[index]}`,
-                                publishedAt: pubDate,
-                                engagementScore: 15,
-                                type: 'social'
-                            };
-                        }).filter(p => p.title.length > 0);
+                                const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, '').trim() : '';
+                                const url = linkMatch ? linkMatch[1] : `https://reddit.com/r/${sub}`;
+                                const pubDate = dateMatch ? new Date(dateMatch[1]) : new Date();
 
-                        redditPosts = [...redditPosts, ...posts];
-                    } else if (res.status === 'rejected') {
-                        console.warn(`[Reddit Scraper] Subreddit r/${subreddits[index]} unavailable (${res.reason?.response?.status || res.reason?.message})`);
+                                return {
+                                    title,
+                                    description: `Trending post on r/${sub}`,
+                                    url,
+                                    image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1000',
+                                    source: `r/${sub}`,
+                                    publishedAt: pubDate,
+                                    engagementScore: 15,
+                                    type: 'social'
+                                };
+                            }).filter(p => p.title.length > 0);
+
+                            redditPosts = [...redditPosts, ...posts];
+                        }
+                    } catch (subErr) {
+                        console.warn(`[Reddit Scraper] Subreddit r/${sub} unavailable (${subErr.response?.status || subErr.message})`);
                     }
-                });
+                }
 
                 return redditPosts;
             } catch (error) {
