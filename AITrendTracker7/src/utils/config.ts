@@ -1,7 +1,7 @@
-// Environment configuration
-// In development (__DEV__ is true), it uses the Android Emulator localhost loopback IP
-// In production, you will change the string to your actual deployed server URL
+// Environment configuration for TrendPulse Mobile Client
+// Deployed Railway Production Backend URL
+export const LIVE_RAILWAY_URL = "https://trend-pulse-production-3b7e.up.railway.app";
 
 export const BASE_URL = __DEV__ 
-  ? "http://127.0.0.1:5000" 
-  : "https://your-production-url.com";
+  ? LIVE_RAILWAY_URL 
+  : LIVE_RAILWAY_URL;
