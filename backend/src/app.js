@@ -32,15 +32,17 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin) return callback(null, true); // Allow requests with no origin (e.g. mobile app, server-to-server)
+        if (!origin) return callback(null, true); // Allow requests with no origin (mobile apps, curl, native HTTP)
+        if (!allowedOrigins.length || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
         const isDev = process.env.NODE_ENV === 'development';
         const isLocal = origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1');
-        if ((isDev && isLocal) || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            logger.warn(`[CORS] Blocked request from origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
+        if ((isDev && isLocal) || origin.includes('railway.app')) {
+            return callback(null, true);
         }
+        logger.warn(`[CORS] Blocked request from origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -56,14 +58,14 @@ app.use(loggingMiddleware);
 
 const { apiLimiter, authLimiter } = require('./middlewares/rateLimiter');
 
-// Apply Redis-backed distributed rate limiting
+// Root & Health check routes (unrestricted for Railway healthchecks)
+app.get(['/', '/health'], (req, res) => {
+    ApiResponse.success(res, 'TrendPulse API is running', { status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Apply Redis-backed distributed rate limiting to /api routes
 app.use('/api/', apiLimiter);
 app.use('/api/users/', authLimiter);
-
-// Basic health check route
-app.get('/health', (req, res) => {
-    ApiResponse.success(res, 'TrendPulse API is running', { status: 'ok' });
-});
 
 const trendRoutes = require('./routes/trendRoutes');
 const aiChatRoutes = require('./routes/aiChatRoutes');
