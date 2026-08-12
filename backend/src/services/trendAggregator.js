@@ -278,106 +278,168 @@ class TrendAggregator {
     }
 
     /**
+     * In-Memory Caches & In-Flight Request Locking (prevents Cache Stampedes)
+     */
+    gnewsCache = new Map();
+    gnewsInFlight = new Map();
+    redditInFlight = new Map();
+
+    /**
      * Fetch from Reddit JSON endpoints
      */
     async fetchFromReddit(category) {
-        try {
-            let subreddits = ['popular', 'news', 'entertainment', 'technology', 'funny'];
-
-            // Global
-            if (category === 'Healthcare') subreddits = ['health', 'medicine'];
-            else if (category === 'Environment') subreddits = ['environment', 'climate'];
-            else if (category === 'Hardware' || category === 'Gadgets') subreddits = ['hardware', 'gadgets'];
-            else if (category === 'Blockchain') subreddits = ['CryptoCurrency', 'blockchain'];
-            else if (category === 'Clean Energy') subreddits = ['energy', 'renewableEnergy'];
-            else if (category === 'AI') subreddits = ['artificial', 'machinelearning'];
-            else if (category === 'Technology') subreddits = ['technology', 'tech'];
-            else if (category === 'Startups') subreddits = ['startups', 'entrepreneur'];
-            else if (category === 'Cybersecurity') subreddits = ['cybersecurity', 'netsec'];
-            else if (category === 'Developer Ecosystem') subreddits = ['programming', 'webdev', 'coding'];
-
-            // India-Focused
-            else if (category === 'Entertainment') subreddits = ['bollywood', 'entertainment'];
-            else if (category === 'Cricket') subreddits = ['Cricket'];
-            else if (category === 'Gaming') subreddits = ['IndianGaming', 'gaming'];
-            else if (category === 'Finance') subreddits = ['IndiaInvestments', 'dalalstreetbets'];
-            else if (category === 'Politics') subreddits = ['india', 'indianews'];
-            else if (category === 'Movies') subreddits = ['bollywood', 'tollywood', 'movies'];
-            else if (category === 'Viral Videos') subreddits = ['ViralVideo', 'PublicFreakout'];
-            else if (category === 'YouTube Trending') subreddits = ['youtube', 'SaimanSays'];
-            else if (category === 'Influencers') subreddits = ['InstaCelebsGossip'];
-            else if (category === 'Memes') subreddits = ['IndianDankMemes', 'memes'];
-            else if (category === 'Education') subreddits = ['IndianAcademia', 'education'];
-
-            const promises = subreddits.map(sub =>
-                axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=5`, { 
-                    timeout: 4000,
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
-                })
-            );
-
-            const responses = await Promise.all(promises);
-            let redditPosts = [];
-
-            responses.forEach(res => {
-                const posts = res.data.data.children.map(child => {
-                    const post = child.data;
-                    return {
-                        title: post.title,
-                        description: post.selftext ? post.selftext.substring(0, 200) + '...' : '',
-                        url: `https://reddit.com${post.permalink}`,
-                        image: post.thumbnail && post.thumbnail.startsWith('http') ? post.thumbnail : 'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=1000',
-                        source: `r/${post.subreddit}`,
-                        publishedAt: new Date(post.created_utc * 1000),
-                        engagementScore: post.score + post.num_comments, // Reddit engagement
-                        type: 'reddit'
-                    };
-                });
-                redditPosts = [...redditPosts, ...posts];
-            });
-
-            return redditPosts;
-        } catch (error) {
-            console.error('Reddit fetch error:', error.message);
-            return [];
+        const cacheKey = `reddit_${category}`;
+        
+        // Single-Flight Locking: If a request for this category is already in-flight, await it to prevent stampedes
+        if (this.redditInFlight.has(cacheKey)) {
+            return this.redditInFlight.get(cacheKey);
         }
+
+        const fetchPromise = (async () => {
+            try {
+                let subreddits = ['popular', 'news', 'entertainment', 'technology', 'funny'];
+
+                // Global
+                if (category === 'Healthcare') subreddits = ['health', 'medicine'];
+                else if (category === 'Environment') subreddits = ['environment', 'climate'];
+                else if (category === 'Hardware' || category === 'Gadgets') subreddits = ['hardware', 'gadgets'];
+                else if (category === 'Blockchain') subreddits = ['CryptoCurrency', 'blockchain'];
+                else if (category === 'Clean Energy') subreddits = ['energy', 'renewableEnergy'];
+                else if (category === 'AI') subreddits = ['artificial', 'machinelearning'];
+                else if (category === 'Technology') subreddits = ['technology', 'tech'];
+                else if (category === 'Startups') subreddits = ['startups', 'entrepreneur'];
+                else if (category === 'Cybersecurity') subreddits = ['cybersecurity', 'netsec'];
+                else if (category === 'Developer Ecosystem') subreddits = ['programming', 'webdev', 'coding'];
+
+                // India-Focused
+                else if (category === 'Entertainment') subreddits = ['bollywood', 'entertainment'];
+                else if (category === 'Cricket') subreddits = ['Cricket'];
+                else if (category === 'Gaming') subreddits = ['IndianGaming', 'gaming'];
+                else if (category === 'Finance') subreddits = ['IndiaInvestments', 'dalalstreetbets'];
+                else if (category === 'Politics') subreddits = ['india', 'indianews'];
+                else if (category === 'Movies') subreddits = ['bollywood', 'tollywood', 'movies'];
+                else if (category === 'Viral Videos') subreddits = ['ViralVideo', 'PublicFreakout'];
+                else if (category === 'YouTube Trending') subreddits = ['youtube', 'SaimanSays'];
+                else if (category === 'Influencers') subreddits = ['InstaCelebsGossip'];
+                else if (category === 'Memes') subreddits = ['IndianDankMemes', 'memes'];
+                else if (category === 'Education') subreddits = ['IndianAcademia', 'education'];
+
+                // Compliant, authentic User-Agent format per Reddit API guidelines
+                const userAgent = process.env.REDDIT_USER_AGENT || 'android:com.trendpulse.app:v1.0.0 (by /u/mdsaqibhussain123)';
+
+                const promises = subreddits.map(sub =>
+                    axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=5`, { 
+                        timeout: 4000,
+                        headers: { 
+                            'User-Agent': userAgent,
+                            'Accept': 'application/json'
+                        }
+                    })
+                );
+
+                // Use Promise.allSettled so if 1 subreddit fails/403s, others still succeed
+                const results = await Promise.allSettled(promises);
+                let redditPosts = [];
+
+                results.forEach((res, index) => {
+                    if (res.status === 'fulfilled' && res.value?.data?.data?.children) {
+                        const posts = res.value.data.data.children.map(child => {
+                            const post = child.data;
+                            return {
+                                title: post.title,
+                                description: post.selftext ? post.selftext.substring(0, 200) + '...' : '',
+                                url: `https://reddit.com${post.permalink}`,
+                                image: post.thumbnail && post.thumbnail.startsWith('http') ? post.thumbnail : 'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=1000',
+                                source: `r/${post.subreddit}`,
+                                publishedAt: new Date(post.created_utc * 1000),
+                                engagementScore: (post.score || 0) + (post.num_comments || 0),
+                                type: 'reddit'
+                            };
+                        });
+                        redditPosts = [...redditPosts, ...posts];
+                    } else if (res.status === 'rejected') {
+                        console.warn(`[Reddit Scraper] Subreddit r/${subreddits[index]} unavailable (${res.reason?.response?.status || res.reason?.message})`);
+                    }
+                });
+
+                return redditPosts;
+            } catch (error) {
+                console.error('Reddit fetch error:', error.message);
+                return [];
+            } finally {
+                this.redditInFlight.delete(cacheKey);
+            }
+        })();
+
+        this.redditInFlight.set(cacheKey, fetchPromise);
+        return fetchPromise;
     }
 
     /**
-     * Fetch from GNews API
+     * Fetch from GNews API (with 20-minute response caching & Cache Stampede In-Flight Locking)
      */
     async fetchFromGNews(category) {
-        try {
-            const apiKey = process.env.GNEWS_API_KEY;
-            if (!apiKey) return [];
+        const apiKey = process.env.GNEWS_API_KEY;
+        if (!apiKey) return [];
 
-            const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+        const cacheKey = `gnews_${category}`;
 
-            let baseQuery = 'viral OR breaking OR world';
-            if (category !== 'Home' && category !== 'All' && category !== 'AI' && category !== 'AI Tech') {
-                baseQuery = category;
-            }
-
-            const query = encodeURIComponent(baseQuery);
-            const countryParam = isIndia ? '&country=in' : '';
-            const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&max=5${countryParam}&apikey=${apiKey}`;
-
-            const response = await axios.get(url, { timeout: 4000 });
-
-            return response.data.articles.map(article => ({
-                title: article.title,
-                description: article.description || '',
-                url: article.url,
-                image: article.image || 'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=1000',
-                source: article.source.name || 'GNews',
-                publishedAt: new Date(article.publishedAt),
-                engagementScore: 2, // slightly higher base score
-                type: 'news'
-            }));
-        } catch (error) {
-            console.error('GNews fetch error:', error.message);
-            return [];
+        // 1. Check GNews Cache (20 mins TTL)
+        const cached = this.gnewsCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < 20 * 60 * 1000)) {
+            return cached.data;
         }
+
+        // 2. Cache Stampede Single-Flight Protection: Reuse pending in-flight Promise if concurrent requests arrive
+        if (this.gnewsInFlight.has(cacheKey)) {
+            return this.gnewsInFlight.get(cacheKey);
+        }
+
+        const fetchPromise = (async () => {
+            try {
+                const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+
+                let baseQuery = 'viral OR breaking OR world';
+                if (category !== 'Home' && category !== 'All' && category !== 'AI' && category !== 'AI Tech') {
+                    baseQuery = category;
+                }
+
+                const query = encodeURIComponent(baseQuery);
+                const countryParam = isIndia ? '&country=in' : '';
+                const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&max=5${countryParam}&apikey=${apiKey}`;
+
+                const response = await axios.get(url, { timeout: 4000 });
+
+                const articles = (response.data.articles || []).map(article => ({
+                    title: article.title,
+                    description: article.description || '',
+                    url: article.url,
+                    image: article.image || 'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=1000',
+                    source: article.source?.name || 'GNews',
+                    publishedAt: new Date(article.publishedAt),
+                    engagementScore: 2,
+                    type: 'news'
+                }));
+
+                // Save to Cache
+                this.gnewsCache.set(cacheKey, { data: articles, timestamp: Date.now() });
+                return articles;
+            } catch (error) {
+                if (error.response?.status === 429) {
+                    console.warn(`[GNews Scraper] Rate limit / quota 429 hit for category: ${category}. Serving cached or empty fallback.`);
+                    const stale = this.gnewsCache.get(cacheKey);
+                    if (stale) return stale.data;
+                } else {
+                    console.error('GNews fetch error:', error.message);
+                }
+                return [];
+            } finally {
+                this.gnewsInFlight.delete(cacheKey);
+            }
+        })();
+
+        this.gnewsInFlight.set(cacheKey, fetchPromise);
+        return fetchPromise;
     }
 
     /**

@@ -8,6 +8,7 @@ import Feather from 'react-native-vector-icons/Feather';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
+import { crashlyticsService } from '../../services/crashlyticsService';
 
 interface Props {
   children: ReactNode;
@@ -31,6 +32,8 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[AppErrorBoundary] Unhandled crash caught:', error, errorInfo);
+    // Send crash details to Firebase Crashlytics dashboard
+    crashlyticsService.recordError(error, errorInfo.componentStack || undefined);
   }
 
   public handleReset = () => {

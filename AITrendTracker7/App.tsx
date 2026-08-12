@@ -18,13 +18,15 @@ import {
   getAndStoreFCMToken,
   setupFCMListeners,
 } from './src/services/fcmService';
+import { crashlyticsService } from './src/services/crashlyticsService';
 
 export default function App() {
   const appState = useRef(AppState.currentState);
 
   useEffect(() => {
-    // Initial connection
+    // Initial connection & Crashlytics breadcrumb
     socketService.connect();
+    crashlyticsService.log('[App] TrendPulse app launched and telemetry active');
 
     // Initialize Firebase Cloud Messaging setup safely
     const initFCM = async () => {

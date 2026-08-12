@@ -41,19 +41,21 @@ class ApiResponse {
         const isDev = process.env.NODE_ENV === 'development';
         let errorDetails = null;
 
-        if (error) {
-            if (error instanceof Error) {
-                errorDetails = isDev ? error.stack : error.message;
-            } else {
-                errorDetails = error;
-            }
+        if (error && isDev) {
+            errorDetails = error instanceof Error ? error.stack : error;
         }
 
-        return res.status(statusCode).json({
+        const responsePayload = {
             success: false,
-            message,
-            error: errorDetails
-        });
+            message
+        };
+
+        // Only attach technical stack traces in development mode
+        if (errorDetails) {
+            responsePayload.error = errorDetails;
+        }
+
+        return res.status(statusCode).json(responsePayload);
     }
 
     /**

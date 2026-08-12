@@ -6,7 +6,8 @@ let genAI;
 let aiModel;
 if (process.env.GEMINI_API_KEY) {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); // ✅ Valid model ID
+    // Use gemini-1.5-flash (higher free quota tier 15 RPM / 1500 RPD)
+    aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 }
 
 // In-Memory Cache (Trend ID -> { data, timestamp })
@@ -85,14 +86,28 @@ Return ONLY valid JSON with no markdown formatting:
 
 Do not include explanation. ONLY JSON.`;
 
-        // 5. Gemini API Call
+        // 5. Gemini API Call with 429 Failover
         try {
-            console.log(`[AI Service] Calling Gemini (2.5-flash) for: ${trendId}`);
-            const result = await aiModel.generateContent(prompt);
-            const responseText = result.response.text();
-            
-            // Gemini sometimes returns markdown JSON formatting e.g., ```json { ... } ```
-            const cleanText = responseText.replace(/```json\n?|```/g, '').trim();
+            console.log(`[AI Service] Calling Gemini for: ${trendId}`);
+            let cleanText;
+            try {
+                const result = await aiModel.generateContent(prompt);
+                const responseText = result.response.text();
+                cleanText = responseText.replace(/```json\n?|```/g, '').trim();
+            } catch (geminiErr) {
+                if (geminiErr.message?.includes('429') || geminiErr.message?.includes('Quota') || geminiErr.status === 429) {
+                    console.warn(`[AI Service] Gemini 429 Quota Exceeded. Attempting OpenRouter failover...`);
+                    try {
+                        cleanText = await callOpenRouterChat('google/gemini-2.5-flash:free', prompt);
+                        cleanText = cleanText.replace(/```json\n?|```/g, '').trim();
+                    } catch (orErr) {
+                        console.warn(`[AI Service] OpenRouter failover also busy. Returning safe fallback data.`);
+                        return this.getFallbackData(trend);
+                    }
+                } else {
+                    throw geminiErr;
+                }
+            }
 
             // Parse and Validate
             let analysisData = JSON.parse(cleanText);

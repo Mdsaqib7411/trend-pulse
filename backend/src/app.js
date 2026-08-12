@@ -127,12 +127,26 @@ app.post('/api/users/onboard', verifyToken, validate(onboardUserSchema), async (
     }
 });
 
-// Standardized Global Error Handling Middleware (with production masking)
+// Standardized Global Error Handling Middleware (Strict Production Stack Masking)
 app.use((err, req, res, next) => {
-    logger.error('Unhandled Server Error: %o', { error: err.message, stack: err.stack, path: req.path });
+    // 1. Log full un-truncated error traceback to Winston logs for backend debugging
+    logger.error('Unhandled Server Error: %o', { 
+        error: err.message, 
+        stack: err.stack, 
+        path: req.path,
+        method: req.method,
+        ip: req.ip 
+    });
+
+    const isDev = process.env.NODE_ENV === 'development';
     const statusCode = err.status || err.statusCode || 500;
-    const message = err.message || 'Internal Server Error';
-    return ApiResponse.error(res, message, err, statusCode);
+
+    // 2. In production, mask internal 500 error messages to prevent database schema / internal detail leaks
+    const userMessage = (statusCode >= 500 && !isDev) 
+        ? 'Internal Server Error' 
+        : (err.message || 'An unexpected error occurred');
+
+    return ApiResponse.error(res, userMessage, err, statusCode);
 });
 
 module.exports = app;
