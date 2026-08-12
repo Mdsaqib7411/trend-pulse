@@ -29,29 +29,32 @@ const PORT = process.env.PORT || 5000;
 // Create HTTP server (required for Socket.IO attachment)
 const server = http.createServer(app);
 
-// Connect to MongoDB
+// Start listening immediately on PORT so cloud platforms (Railway) detect the open port right away
+server.listen(PORT, '0.0.0.0', () => {
+    logger.info(`[Server] Server running on port ${PORT}`);
+
+    // Initialize WebSocket server
+    socketService.init(server);
+});
+
+// Connect to MongoDB asynchronously in background
 mongoose.connect(process.env.MONGO_URI)
 .then(async () => {
     logger.info('[Server] MongoDB connected successfully.');
 
     // Verify compound indexes
     await ensureIndexes();
+    
+    // Start autonomous background tasks
+    const backgroundWorker = require('./src/services/backgroundWorker');
+    backgroundWorker.start();
 
-    server.listen(PORT, () => {
-        logger.info(`[Server] Server running on port ${PORT}`);
-
-        // Initialize WebSocket server
-        socketService.init(server);
-        
-        // Start autonomous background tasks
-        const backgroundWorker = require('./src/services/backgroundWorker');
-        backgroundWorker.start();
-
-        // Start Queue Workers
-        require('./src/queues/workers/aiEnrichmentWorker');
-        require('./src/queues/workers/trendWorker');
-        require('./src/jobs/trendAggregatorJob');
-        require('./src/jobs/intelligenceScheduler');
+    // Start Queue Workers
+    require('./src/queues/workers/aiEnrichmentWorker');
+    require('./src/queues/workers/trendWorker');
+    require('./src/jobs/trendAggregatorJob');
+    require('./src/jobs/intelligenceScheduler');
+})
 
         // Layer 3: Hourly geo trend emerging scan
         cron.schedule('0 * * * *', async () => {
