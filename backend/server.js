@@ -24,18 +24,33 @@ const cron = require('node-cron');
 const { ensureIndexes } = require('./src/config/dbIndexes');
 const geoTrendEngine = require('./src/services/geoTrendEngine');
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
 
 // Create HTTP server (required for Socket.IO attachment)
 const server = http.createServer(app);
 
 // Start listening immediately on PORT so cloud platforms (Railway) detect the open port right away
 server.listen(PORT, '0.0.0.0', () => {
-    logger.info(`[Server] Server running on port ${PORT}`);
+    logger.info(`[Server] Server listening on primary port ${PORT}`);
 
     // Initialize WebSocket server
     socketService.init(server);
 });
+
+// Secondary listener on Port 5000 for Railway proxy compatibility if PORT is different (e.g. 8080)
+if (PORT !== 5000) {
+    try {
+        const secondaryServer = http.createServer(app);
+        secondaryServer.listen(5000, '0.0.0.0', () => {
+            logger.info('[Server] Secondary listener active on port 5000 for Railway proxy compatibility.');
+        });
+        secondaryServer.on('error', (err) => {
+            logger.warn('[Server] Secondary port 5000 listener info: %s', err.message);
+        });
+    } catch (err) {
+        logger.warn('[Server] Could not bind secondary port 5000: %s', err.message);
+    }
+}
 
 // Connect to MongoDB asynchronously in background
 mongoose.connect(process.env.MONGO_URI)
