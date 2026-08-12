@@ -317,45 +317,37 @@ class TrendAggregator {
                 else if (category === 'Gaming') subreddits = ['IndianGaming', 'gaming'];
                 else if (category === 'Finance') subreddits = ['IndiaInvestments', 'dalalstreetbets'];
                 else if (category === 'Politics') subreddits = ['india', 'indianews'];
-                else if (category === 'Movies') subreddits = ['bollywood', 'tollywood', 'movies'];
-                else if (category === 'Viral Videos') subreddits = ['ViralVideo', 'PublicFreakout'];
-                else if (category === 'YouTube Trending') subreddits = ['youtube', 'SaimanSays'];
-                else if (category === 'Influencers') subreddits = ['InstaCelebsGossip'];
-                else if (category === 'Memes') subreddits = ['IndianDankMemes', 'memes'];
-                else if (category === 'Education') subreddits = ['IndianAcademia', 'education'];
+                if (category === 'Technology' || category === 'AI') subreddits = ['technology', 'artificial', 'hardware', 'programming'];
+                if (category === 'Crypto') subreddits = ['CryptoCurrency', 'Bitcoin'];
+                if (category === 'Cricket') subreddits = ['Cricket', 'CricketNews'];
+                if (category === 'Gaming') subreddits = ['gaming', 'Games'];
+                if (category === 'Finance') subreddits = ['personalfinance', 'investing', 'wallstreetbets'];
 
-                // Compliant, authentic User-Agent format per Reddit API guidelines
+                // Reddit Compliant User-Agent string
                 const userAgent = process.env.REDDIT_USER_AGENT || 'android:com.trendpulse.app:v1.0.0 (by /u/mdsaqibhussain123)';
 
                 const promises = subreddits.map(sub =>
-                    axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=5`, { 
-                        timeout: 4000,
-                        headers: { 
-                            'User-Agent': userAgent,
-                            'Accept': 'application/json'
-                        }
+                    axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=3`, {
+                        headers: { 'User-Agent': userAgent },
+                        timeout: 3000
                     })
                 );
 
-                // Use Promise.allSettled so if 1 subreddit fails/403s, others still succeed
                 const results = await Promise.allSettled(promises);
-                let redditPosts = [];
 
+                let redditPosts = [];
                 results.forEach((res, index) => {
-                    if (res.status === 'fulfilled' && res.value?.data?.data?.children) {
-                        const posts = res.value.data.data.children.map(child => {
-                            const post = child.data;
-                            return {
-                                title: post.title,
-                                description: post.selftext ? post.selftext.substring(0, 200) + '...' : '',
-                                url: `https://reddit.com${post.permalink}`,
-                                image: post.thumbnail && post.thumbnail.startsWith('http') ? post.thumbnail : 'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=1000',
-                                source: `r/${post.subreddit}`,
-                                publishedAt: new Date(post.created_utc * 1000),
-                                engagementScore: (post.score || 0) + (post.num_comments || 0),
-                                type: 'reddit'
-                            };
-                        });
+                    if (res.status === 'fulfilled' && res.value.data?.data?.children) {
+                        const posts = res.value.data.data.children.map(c => ({
+                            title: c.data.title,
+                            description: c.data.selftext ? c.data.selftext.substring(0, 150) + '...' : '',
+                            url: `https://reddit.com${c.data.permalink}`,
+                            image: c.data.thumbnail && c.data.thumbnail.startsWith('http') ? c.data.thumbnail : 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1000',
+                            source: `r/${subreddits[index]}`,
+                            publishedAt: new Date(c.data.created_utc * 1000),
+                            engagementScore: Math.min(100, (c.data.score || 10) / 100),
+                            type: 'social'
+                        }));
                         redditPosts = [...redditPosts, ...posts];
                     } else if (res.status === 'rejected') {
                         console.warn(`[Reddit Scraper] Subreddit r/${subreddits[index]} unavailable (${res.reason?.response?.status || res.reason?.message})`);
@@ -364,7 +356,7 @@ class TrendAggregator {
 
                 return redditPosts;
             } catch (error) {
-                console.error('Reddit fetch error:', error.message);
+                console.error('Reddit fetch global error:', error.message);
                 return [];
             } finally {
                 this.redditInFlight.delete(cacheKey);
@@ -376,12 +368,10 @@ class TrendAggregator {
     }
 
     /**
-     * Fetch from GNews API (with 20-minute response caching & Cache Stampede In-Flight Locking)
+     * Fetch from GNews API (with 20-minute response caching, Cache Stampede Protection & RSS Fallback)
      */
     async fetchFromGNews(category) {
         const apiKey = process.env.GNEWS_API_KEY;
-        if (!apiKey) return [];
-
         const cacheKey = `gnews_${category}`;
 
         // 1. Check GNews Cache (20 mins TTL)
@@ -396,13 +386,17 @@ class TrendAggregator {
         }
 
         const fetchPromise = (async () => {
-            try {
-                const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+            let baseQuery = 'viral OR breaking OR world';
+            if (category !== 'Home' && category !== 'All' && category !== 'AI' && category !== 'AI Tech') {
+                baseQuery = category;
+            }
 
-                let baseQuery = 'viral OR breaking OR world';
-                if (category !== 'Home' && category !== 'All' && category !== 'AI' && category !== 'AI Tech') {
-                    baseQuery = category;
+            try {
+                if (!apiKey) {
+                    return await this.fetchGoogleNewsRSS(baseQuery, category);
                 }
+
+                const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
 
                 const query = encodeURIComponent(baseQuery);
                 const countryParam = isIndia ? '&country=in' : '';
@@ -426,7 +420,12 @@ class TrendAggregator {
                 return articles;
             } catch (error) {
                 if (error.response?.status === 429) {
-                    console.warn(`[GNews Scraper] Rate limit / quota 429 hit for category: ${category}. Serving cached or empty fallback.`);
+                    console.warn(`[GNews Scraper] Rate limit / quota 429 hit for category: ${category}. Triggering zero-quota Google News RSS Fallback.`);
+                    const rssArticles = await this.fetchGoogleNewsRSS(baseQuery, category);
+                    if (rssArticles.length > 0) {
+                        this.gnewsCache.set(cacheKey, { data: rssArticles, timestamp: Date.now() });
+                        return rssArticles;
+                    }
                     const stale = this.gnewsCache.get(cacheKey);
                     if (stale) return stale.data;
                 } else {
@@ -443,41 +442,89 @@ class TrendAggregator {
     }
 
     /**
-     * Fetch from YouTube API
+     * Fetch from YouTube API (with 30-min Response Cache, Multi-Key Rotation & In-Flight Locking)
      */
     async fetchFromYouTube(category) {
-        try {
-            const apiKey = process.env.YOUTUBE_API_KEY;
-            if (!apiKey) return [];
+        const rawKeys = process.env.YOUTUBE_API_KEY || '';
+        const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+        if (apiKeys.length === 0) return [];
 
-            const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+        const cacheKey = `youtube_${category}`;
 
-            let url;
-            if (category === 'Home' || category === 'All') {
-                // Fetch actual general trending videos for Home feed
-                url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=IN&maxResults=5&key=${apiKey}`;
-            } else {
-                const query = encodeURIComponent(`latest trending ${category}`);
-                const regionParam = isIndia ? '&regionCode=IN' : '';
-                url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&order=relevance${regionParam}&maxResults=5&key=${apiKey}`;
-            }
-
-            const response = await axios.get(url, { timeout: 4000 });
-
-            return response.data.items.map(item => ({
-                title: item.snippet.title,
-                description: item.snippet.description || '',
-                url: `https://www.youtube.com/watch?v=${item.id.videoId || item.id}`,
-                image: item.snippet.thumbnails?.high?.url || 'https://images.unsplash.com/photo-1617802690992-15d93263d3a9?auto=format&fit=crop&q=80&w=1000',
-                source: item.snippet.channelTitle || 'YouTube',
-                publishedAt: new Date(item.snippet.publishedAt),
-                engagementScore: item.statistics ? Math.min(100, parseInt(item.statistics.viewCount) / 50000) : 15,
-                type: 'video'
-            }));
-        } catch (error) {
-            console.error('YouTube fetch error:', error.message);
-            return [];
+        // 1. Check YouTube Cache (30 mins TTL to conserve YouTube quota)
+        const cached = this.youtubeCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < 30 * 60 * 1000)) {
+            return cached.data;
         }
+
+        // 2. Single-Flight In-Flight Request Locking (prevents parallel identical YouTube calls)
+        if (this.youtubeInFlight.has(cacheKey)) {
+            return this.youtubeInFlight.get(cacheKey);
+        }
+
+        const fetchPromise = (async () => {
+            try {
+                const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+                let items = [];
+                let success = false;
+
+                // 3. Multi-Key Rotation: Try keys sequentially if key 1 returns 429 quota error
+                for (const apiKey of apiKeys) {
+                    try {
+                        let url;
+                        if (category === 'Home' || category === 'All') {
+                            url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=IN&maxResults=5&key=${apiKey}`;
+                        } else {
+                            const query = encodeURIComponent(`latest trending ${category}`);
+                            const regionParam = isIndia ? '&regionCode=IN' : '';
+                            url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&order=relevance${regionParam}&maxResults=5&key=${apiKey}`;
+                        }
+
+                        const response = await axios.get(url, { timeout: 4000 });
+                        if (response.data?.items) {
+                            items = response.data.items.map(item => ({
+                                title: item.snippet.title,
+                                description: item.snippet.description || '',
+                                url: `https://www.youtube.com/watch?v=${item.id.videoId || item.id}`,
+                                image: item.snippet.thumbnails?.high?.url || 'https://images.unsplash.com/photo-1617802690992-15d93263d3a9?auto=format&fit=crop&q=80&w=1000',
+                                source: item.snippet.channelTitle || 'YouTube',
+                                publishedAt: new Date(item.snippet.publishedAt),
+                                engagementScore: item.statistics ? Math.min(100, parseInt(item.statistics.viewCount) / 50000) : 15,
+                                type: 'video'
+                            }));
+                            success = true;
+                            break;
+                        }
+                    } catch (keyErr) {
+                        const status = keyErr.response?.status;
+                        if (status === 429 || status === 403) {
+                            console.warn(`[YouTube Scraper] Key ending with ...${apiKey.slice(-4)} hit quota limit (status: ${status}). Rotating to next key if available.`);
+                            continue;
+                        }
+                        console.error('[YouTube Scraper Key Error]:', keyErr.message);
+                    }
+                }
+
+                if (success && items.length > 0) {
+                    this.youtubeCache.set(cacheKey, { data: items, timestamp: Date.now() });
+                    return items;
+                }
+
+                // 4. Stale cache fallback if all keys failed
+                const stale = this.youtubeCache.get(cacheKey);
+                if (stale) {
+                    console.warn(`[YouTube Scraper] All API keys exhausted. Serving stale cached videos for category: ${category}`);
+                    return stale.data;
+                }
+
+                return [];
+            } finally {
+                this.youtubeInFlight.delete(cacheKey);
+            }
+        })();
+
+        this.youtubeInFlight.set(cacheKey, fetchPromise);
+        return fetchPromise;
     }
 
     /**
