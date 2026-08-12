@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
   details: {
     color: colors.text.secondary,
     fontSize: typography.size.sm,
-    lineHeight: typography.lineHeight.normal,
+    lineHeight: Math.round(typography.size.sm * typography.lineHeight.normal),
   }
 });
 

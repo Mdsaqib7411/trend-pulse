@@ -1,23 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { 
-  View, Text, StyleSheet, Dimensions, TouchableOpacity, ScrollView, 
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, 
   Animated, Easing, Share
 } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { TrendGraphSkeleton } from '../../components/SkeletonLoader';
-import PredictionDetailCard from '../../components/prediction/PredictionDetailCard';
+import PredictionVisualizer from '../../components/prediction/PredictionVisualizer';
 import { trackInteraction } from '../../utils/interactionTracker';
 import {
   useGetTrendAnalyticsQuery,
   useGetTrendPredictionQuery,
   useLazyGetTrendHistoryQuery,
-  useBookmarkTrendMutation
+  useBookmarkTrendMutation,
+  useGetSavedTrendsQuery
 } from '../../store/slices/trendsApi';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
-import { layout } from '../../theme/layout';
 import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
@@ -33,8 +33,11 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
   const { data: predictionData, isLoading: isPredictionLoading } = useGetTrendPredictionQuery(trendId);
   const [triggerHistoryQuery, { data: historyData }] = useLazyGetTrendHistoryQuery();
   const [bookmarkTrendMutation] = useBookmarkTrendMutation();
+  const { data: savedResponse } = useGetSavedTrendsQuery();
 
-  const [isSaved, setIsSaved] = useState(false);
+  const isSaved = (savedResponse?.data ?? []).some(
+    (s: any) => (s.trendId || s._id || s.id) === trendId
+  );
   const [activeTimeFilter, setActiveTimeFilter] = useState('24H');
   
   // Animations
@@ -66,7 +69,7 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
     ).start();
 
     trackInteraction(trendId, 'click');
-  }, []);
+  }, [pulseAnim, trendId]);
 
   useEffect(() => {
     if (!loading && analyticsData?.success) {
@@ -76,7 +79,7 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
         Animated.timing(slideAnim, { toValue: 0, duration: 600, easing: Easing.out(Easing.exp), useNativeDriver: true })
       ]).start();
     }
-  }, [loading, analyticsData]);
+  }, [loading, analyticsData, fadeAnim, slideAnim]);
 
   const isPositive = analytics.growthRate >= 0;
 
@@ -108,10 +111,7 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
 
   const handleBookmark = async () => {
     try {
-      const res = await bookmarkTrendMutation(trendId).unwrap();
-      if (res.success) {
-        setIsSaved(res.bookmarked);
-      }
+      await bookmarkTrendMutation(trendId).unwrap();
     } catch (e) {
       console.error('Bookmark error:', e);
     }
@@ -193,7 +193,7 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <Screen scrollable={false} safeAreaEdges={['top']}>
+      <Screen scrollable={false} safeAreaEdges={['top', 'bottom']}>
         <Header title={item.title || "Trend Details"} showBack={true} onBack={() => navigation.goBack()} />
         <TrendGraphSkeleton />
       </Screen>
@@ -201,7 +201,7 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
   }
 
   return (
-    <Screen scrollable={false} safeAreaEdges={['top']}>
+    <Screen scrollable={false} safeAreaEdges={['top', 'bottom']}>
       {/* BACKGROUND EFFECTS */}
       <View style={styles.bgGlow1} />
       <View style={styles.bgGlow2} />
@@ -280,11 +280,23 @@ export default function TrendGraphScreen({ route, navigation }: Props) {
           </View>
 
           {/* 4.5️⃣ PREDICTION CARD */}
-          {prediction && (
-            <View style={styles.section}>
-              <PredictionDetailCard prediction={prediction} />
-            </View>
-          )}
+          {prediction && (() => {
+            const migrationMatrix: { [key: string]: string } = {};
+            if (prediction.predictedRegions && Array.isArray(prediction.predictedRegions)) {
+              prediction.predictedRegions.slice(0, 3).forEach((reg: any) => {
+                const label = reg.state ? `${reg.state}, ${reg.country}` : reg.country;
+                migrationMatrix[`+${reg.timeLagHours}h`] = `${label} (${Math.round(reg.probability * 100)}%)`;
+              });
+            }
+            return (
+              <View style={styles.section}>
+                <PredictionVisualizer 
+                  confidenceScore={Math.round(prediction.confidenceScore * 100)} 
+                  migrationMatrix={Object.keys(migrationMatrix).length > 0 ? migrationMatrix : undefined}
+                />
+              </View>
+            );
+          })()}
 
           {/* 5️⃣ SOURCE DISTRIBUTION */}
           <View style={styles.section}>
@@ -389,7 +401,7 @@ const styles = StyleSheet.create({
   chartBarsArea: { flex: 1, position: 'relative' },
   gridLines: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between', paddingVertical: 15 },
   gridLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.03)' },
-  chartBarsContainer: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', paddingTop: 10 },
+  chartBarsContainer: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', paddingTop: 10, paddingHorizontal: 12 },
   chartBarWrapper: { alignItems: 'center', width: 30 },
   chartBarFill: { width: 12, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 6, overflow: 'hidden' },
   chartBarDot: { position: 'absolute', top: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: colors.text.primary, opacity: 0.8 },

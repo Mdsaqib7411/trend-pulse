@@ -21,19 +21,13 @@ import ProfileScreen from '../navigations/screens/ProfileScreen';
 import EditProfileScreen from '../navigations/screens/EditProfileScreen';
 import SecurityScreen from '../navigations/screens/SecurityScreen';
 import ChangePasswordScreen from '../navigations/screens/ChangePasswordScreen';
+import AdminDashboardScreen from '../navigations/screens/AdminDashboardScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AuthGate() {
   const isAuthenticated = useAppSelector(selectIsAuthenticated);
-  const [isSplashActive, setIsSplashActive] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsSplashActive(false);
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, []);
+  const [isSplashComplete, setIsSplashComplete] = useState(false);
 
   return (
     <Stack.Navigator
@@ -45,8 +39,12 @@ export default function AuthGate() {
         gestureDirection: 'horizontal',
       }}
     >
-      {isSplashActive ? (
-        <Stack.Screen name={ROUTES.SPLASH} component={SplashScreen} />
+      {!isSplashComplete ? (
+        <Stack.Screen name={ROUTES.SPLASH}>
+          {(props) => (
+            <SplashScreen {...props} onComplete={() => setIsSplashComplete(true)} />
+          )}
+        </Stack.Screen>
       ) : !isAuthenticated ? (
         <>
           <Stack.Screen name={ROUTES.LOGIN} component={LoginScreen} />
@@ -66,6 +64,7 @@ export default function AuthGate() {
           <Stack.Screen name={ROUTES.EDIT_PROFILE} component={EditProfileScreen} />
           <Stack.Screen name={ROUTES.SECURITY} component={SecurityScreen} />
           <Stack.Screen name={ROUTES.CHANGE_PASSWORD} component={ChangePasswordScreen} />
+          <Stack.Screen name={ROUTES.ADMIN_DASHBOARD} component={AdminDashboardScreen} />
         </>
       )}
     </Stack.Navigator>

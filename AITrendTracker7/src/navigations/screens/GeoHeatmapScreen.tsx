@@ -3,6 +3,7 @@ import { View, StyleSheet, Text } from 'react-native';
 import MapView, { Marker, Heatmap, PROVIDER_DEFAULT, Region } from 'react-native-maps';
 import { useAppSelector } from '../../store/hooks';
 import { selectHeatmapNodes } from '../../store/selectors/geoSelectors';
+import { useGetHeatmapPayloadQuery } from '../../store/apiSlice';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -10,6 +11,7 @@ import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
+import GeoPulseCard from '../../components/feed/GeoPulseCard';
 
 const INITIAL_REGION: Region = {
   latitude: 20.5937,
@@ -21,25 +23,45 @@ const INITIAL_REGION: Region = {
 type Props = RootStackScreenProps<typeof ROUTES.GEO_HEATMAP>;
 
 export default function GeoHeatmapScreen({ navigation }: Props) {
-  const rawNodes = useAppSelector(selectHeatmapNodes);
+  const { data: heatmapPayload } = useGetHeatmapPayloadQuery();
+  const socketNodes = useAppSelector(selectHeatmapNodes);
+
+  const mergedNodes = useMemo(() => {
+    const apiNodes = heatmapPayload?.data?.map((spike: any) => ({
+      latitude: spike.lat,
+      longitude: spike.lng,
+      weight: spike.weight || 1,
+      city: spike.city,
+      country: spike.country,
+      topTrend: spike.topTrend,
+    })) || [];
+
+    const merged = [...apiNodes];
+    for (const sNode of socketNodes) {
+      if (!merged.some(m => Math.abs(m.latitude - sNode.latitude) < 0.01 && Math.abs(m.longitude - sNode.longitude) < 0.01)) {
+        merged.push(sNode);
+      }
+    }
+    return merged;
+  }, [heatmapPayload, socketNodes]);
   
   // 1. STREAM THROTTLING: 2500ms throttle for Redux stream
-  const [throttledNodes, setThrottledNodes] = useState(rawNodes);
+  const [throttledNodes, setThrottledNodes] = useState(mergedNodes);
   const lastUpdateRef = useRef<number>(Date.now());
   
   useEffect(() => {
     const now = Date.now();
     if (now - lastUpdateRef.current > 2500) {
-      setThrottledNodes(rawNodes);
+      setThrottledNodes(mergedNodes);
       lastUpdateRef.current = now;
     } else {
       const timer = setTimeout(() => {
-        setThrottledNodes(rawNodes);
+        setThrottledNodes(mergedNodes);
         lastUpdateRef.current = Date.now();
       }, 2500 - (now - lastUpdateRef.current));
       return () => clearTimeout(timer);
     }
-  }, [rawNodes]);
+  }, [mergedNodes]);
 
   // Map state for lazy rendering
   const [isMapIdle, setIsMapIdle] = useState(false);
@@ -146,6 +168,13 @@ export default function GeoHeatmapScreen({ navigation }: Props) {
         {/* Render standard clustered markers at all times */}
         {renderMarkers}
       </MapView>
+
+      {/* GeoPulseCard Overlay (P1) */}
+      {throttledNodes.length > 0 ? (
+        <View style={styles.pulseOverlayContainer}>
+          <GeoPulseCard geoSpike={throttledNodes[0]} />
+        </View>
+      ) : null}
     </Screen>
   );
 }
@@ -204,7 +233,14 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontWeight: typography.weight.bold,
     fontSize: typography.size.xs,
-  }
+  },
+  pulseOverlayContainer: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
 });
 
 const mapStyleDark = [

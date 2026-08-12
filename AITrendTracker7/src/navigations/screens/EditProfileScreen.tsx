@@ -115,6 +115,7 @@ export default function EditProfileScreen({ navigation }: Props) {
     }
 
     setLoading(true);
+    let success = false;
     try {
       const authUser = getAuth().currentUser;
       if (!authUser) throw new Error("No authenticated user found.");
@@ -162,6 +163,7 @@ export default function EditProfileScreen({ navigation }: Props) {
         })
       );
 
+      success = true;
       Alert.alert("Success", "Profile updated successfully.", [
         { text: "OK", onPress: () => navigation.goBack() },
       ]);
@@ -169,12 +171,12 @@ export default function EditProfileScreen({ navigation }: Props) {
       console.log("Profile Save Error:", error);
       Alert.alert("Save Failed", error.message || "Could not save profile details.");
     } finally {
-      setLoading(false);
+      if (!success) setLoading(false);
     }
   }, [displayName, photoURL, bio, dispatch, navigation, refetchProfile]);
 
   return (
-    <Screen scrollable={true} keyboardAvoiding={true}>
+    <Screen scrollable={false} keyboardAvoiding={true}>
       <Header title="Edit Profile" showBack={true} onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -203,7 +205,7 @@ export default function EditProfileScreen({ navigation }: Props) {
                 style={styles.editAvatarBtn}
                 activeOpacity={0.8}
                 onPress={handleSelectImage}
-                disabled={uploadingImage}
+                disabled={uploadingImage || loading}
               >
                 <LinearGradient
                   colors={[colors.neon.purple, "#8B5CF6"]}

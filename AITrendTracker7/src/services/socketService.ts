@@ -5,6 +5,7 @@ import { addRealtimeTrendsBatch, Trend } from '../store/slices/trendsSlice';
 import { addGeoSpike } from '../store/slices/geoSlice';
 import { addSystemAlert } from '../store/slices/notificationsSlice';
 import { updatePredictionNode } from '../store/slices/predictionSlice';
+import { getAuthToken } from '../utils/storage';
 
 class SocketService {
   private socket: Socket | null = null;
@@ -17,6 +18,8 @@ class SocketService {
   public connect(token?: string) {
     if (this.socket && this.socket.connected) return;
 
+    const activeToken = token || getAuthToken();
+
     this.socket = io(BASE_URL, {
       transports: ['websocket'],
       autoConnect: true,
@@ -24,7 +27,7 @@ class SocketService {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      auth: token ? { token } : undefined,
+      auth: activeToken ? { token: activeToken } : undefined,
     });
 
     this.socket.on('connect', () => {

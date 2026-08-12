@@ -15,7 +15,7 @@ import {
 import LinearGradient from "react-native-linear-gradient";
 import Feather from "react-native-vector-icons/Feather";
 import FontAwesome from "react-native-vector-icons/FontAwesome";
-import { getAuth, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithCredential } from '@react-native-firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithCredential, sendEmailVerification } from '@react-native-firebase/auth';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { BASE_URL } from "../../utils/config";
 import { colors } from "../../theme/colors";
@@ -72,7 +72,7 @@ export default function RegisterScreen({ navigation }: Props) {
   };
 
   const handleRegister = async () => {
-    if (!name || !email || !password || !confirm) {
+    if (!name.trim() || !email.trim() || !password || !confirm) {
       Alert.alert("Error", "Please fill all fields");
       return;
     }
@@ -83,14 +83,17 @@ export default function RegisterScreen({ navigation }: Props) {
     }
 
     setLoading(true);
+    let success = false;
     try {
       const userCredential = await createUserWithEmailAndPassword(getAuth(), email.trim(), password);
       if (userCredential.user) {
         await updateProfile(userCredential.user, {
-          displayName: name,
+          displayName: name.trim(),
         });
-        await syncUserWithBackend({ ...userCredential.user, displayName: name });
+        await sendEmailVerification(userCredential.user);
+        await syncUserWithBackend({ ...userCredential.user, displayName: name.trim() });
       }
+      success = true;
       // AuthGate reactively mounts TabNavigator, no manual replace needed.
     } catch (error: any) {
       if (error.code === 'auth/email-already-in-use') {
@@ -103,12 +106,13 @@ export default function RegisterScreen({ navigation }: Props) {
         Alert.alert("Registration Failed", error.message);
       }
     } finally {
-      setLoading(false);
+      if (!success) setLoading(false);
     }
   };
 
   const onGoogleButtonPress = async () => {
     setGoogleLoading(true);
+    let success = false;
     try {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
       const signInResult = await GoogleSignin.signIn();
@@ -121,6 +125,7 @@ export default function RegisterScreen({ navigation }: Props) {
       const googleCredential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(getAuth(), googleCredential);
       await syncUserWithBackend(getAuth().currentUser);
+      success = true;
       // AuthGate reactively mounts TabNavigator, no manual replace needed.
     } catch (error: any) {
       if (error.code === statusCodes.SIGN_IN_CANCELLED) {
@@ -129,7 +134,7 @@ export default function RegisterScreen({ navigation }: Props) {
         Alert.alert("Google Login Error", error.message);
       }
     } finally {
-      setGoogleLoading(false);
+      if (!success) setGoogleLoading(false);
     }
   };
 
@@ -215,7 +220,7 @@ export default function RegisterScreen({ navigation }: Props) {
                 </View>
 
                 {/* BUTTON */}
-                <TouchableOpacity onPress={handleRegister} activeOpacity={0.8} disabled={loading} style={{marginTop: 8}}>
+                <TouchableOpacity onPress={handleRegister} activeOpacity={0.8} disabled={loading || googleLoading} style={{marginTop: 8}}>
                   <LinearGradient
                     colors={[colors.neon.purple, colors.neon.blue, colors.neon.cyan]}
                     start={{ x: 0, y: 0 }}
@@ -236,7 +241,7 @@ export default function RegisterScreen({ navigation }: Props) {
               <Text style={styles.or}>OR CONTINUE WITH</Text>
 
               {/* GOOGLE */}
-              <TouchableOpacity onPress={onGoogleButtonPress} style={styles.socialBtn} disabled={googleLoading} activeOpacity={0.8}>
+              <TouchableOpacity onPress={onGoogleButtonPress} style={styles.socialBtn} disabled={loading || googleLoading} activeOpacity={0.8}>
                 {googleLoading ? (
                   <ActivityIndicator color={colors.text.primary} size="small" />
                 ) : (

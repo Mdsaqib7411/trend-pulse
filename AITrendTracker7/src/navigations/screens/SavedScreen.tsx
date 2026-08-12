@@ -1,36 +1,27 @@
-import React, { useState, useCallback } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
-import { getSavedItems, unsaveItem } from '../../utils/savedStorage';
+import { useGetSavedTrendsQuery, useBookmarkTrendMutation } from '../../store/slices/trendsApi';
 import { ROUTES } from '../../navigation/routes';
 import { MainTabScreenProps } from '../../navigation/types';
 import { layout } from '../../theme/layout';
 
 export default function SavedScreen({ navigation }: MainTabScreenProps<typeof ROUTES.SAVED>) {
-  const [savedItems, setSavedItems] = useState<any[]>([]);
+  const { data: savedResponse, isLoading } = useGetSavedTrendsQuery();
+  const [bookmarkTrend] = useBookmarkTrendMutation();
 
-  // Refresh saved items every time screen is focused
-  useFocusEffect(
-    useCallback(() => {
-      loadSaved();
-    }, [])
-  );
-
-  const loadSaved = async () => {
-    const items = await getSavedItems();
-    setSavedItems(items);
-  };
+  const savedItems = savedResponse?.data ?? [];
 
   const handleUnsave = (id: string) => {
     Alert.alert(
@@ -41,9 +32,9 @@ export default function SavedScreen({ navigation }: MainTabScreenProps<typeof RO
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: async () => {
-            await unsaveItem(id);
-            setSavedItems(prev => prev.filter(i => i.id !== id));
+          onPress: () => {
+            // RTK mutation: POSTs toggle, invalidates ['User'] tag → useGetSavedTrendsQuery auto-refetches
+            bookmarkTrend(id);
           },
         },
       ]
@@ -68,7 +59,9 @@ export default function SavedScreen({ navigation }: MainTabScreenProps<typeof RO
         contentContainerStyle={styles.scrollContent}
       >
         <View style={styles.content}>
-          {savedItems.length > 0 ? (
+          {isLoading ? (
+            <ActivityIndicator style={{ marginTop: 60 }} size="large" color="#6A25F4" />
+          ) : savedItems.length > 0 ? (
             savedItems.map(item => {
               const anyItem = item as any;
               const itemId = anyItem.trendId || anyItem._id || anyItem.id;

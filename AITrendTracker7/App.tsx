@@ -13,6 +13,11 @@ import { AppErrorBoundary } from './src/components/common/AppErrorBoundary';
 import { OfflineBanner } from './src/components/common/OfflineBanner';
 import { socketService } from './src/services/socketService';
 import { SyncGate } from './src/components/common/SyncGate';
+import {
+  requestNotificationPermission,
+  getAndStoreFCMToken,
+  setupFCMListeners,
+} from './src/services/fcmService';
 
 export default function App() {
   const appState = useRef(AppState.currentState);
@@ -20,6 +25,18 @@ export default function App() {
   useEffect(() => {
     // Initial connection
     socketService.connect();
+
+    // Initialize Firebase Cloud Messaging setup safely
+    const initFCM = async () => {
+      const permitted = await requestNotificationPermission();
+      if (permitted) {
+        await getAndStoreFCMToken();
+      }
+    };
+    initFCM();
+
+    // Register foreground messaging and token refresh listeners
+    const cleanupFCM = setupFCMListeners();
 
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (
@@ -39,6 +56,7 @@ export default function App() {
     return () => {
       subscription.remove();
       socketService.disconnect();
+      cleanupFCM(); // Safely clean up FCM listeners to prevent duplicates and memory leaks
     };
   }, []);
 

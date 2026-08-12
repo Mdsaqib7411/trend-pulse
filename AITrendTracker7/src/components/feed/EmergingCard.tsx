@@ -10,6 +10,17 @@ interface Props {
   onPress: (item: Trend) => void;
 }
 
+const getLifecycleColor = (state: string) => {
+  switch(state.toLowerCase()) {
+    case 'emerging': return '#0ea5e9';
+    case 'accelerating': return '#00F2FE';
+    case 'viral': return '#a855f7';
+    case 'declining': return '#f43f5e';
+    case 'dead': return '#64748b';
+    default: return '#0ea5e9';
+  }
+};
+
 const EmergingCard = ({ item, index, onPress }: Props) => {
   return (
     <TouchableOpacity
@@ -18,7 +29,7 @@ const EmergingCard = ({ item, index, onPress }: Props) => {
       onPress={() => onPress(item)}
     >
       <Text style={styles.rankText}>{index + 1}</Text>
-
+ 
       {item.image && item.image.length > 5 ? (
         <Image source={{ uri: item.image }} style={styles.fastThumbnail} />
       ) : (
@@ -26,16 +37,24 @@ const EmergingCard = ({ item, index, onPress }: Props) => {
           <Feather name="activity" size={24} color="#64748B" />
         </LinearGradient>
       )}
-
+ 
       <View style={styles.fastContent}>
         <Text style={styles.fastTitle} numberOfLines={2}>{item.title}</Text>
         <View style={styles.fastFooter}>
           <Text style={styles.fastCategory}>{item.source}</Text>
+          {item.growthMomentum ? (
+            <>
+              <View style={styles.dot} />
+              <Text style={[styles.lifecycleBadgeText, { color: getLifecycleColor(item.growthMomentum) }]}>
+                {item.growthMomentum.toUpperCase()}
+              </Text>
+            </>
+          ) : null}
           <View style={styles.dot} />
           <Text style={styles.fastTime}>{item.time || '2h ago'}</Text>
         </View>
       </View>
-
+ 
       <View style={styles.growthBadge}>
         <Feather name="arrow-up-right" size={12} color="#00F2FE" />
         <Text style={styles.fastGrowth}>{item.engagementScore || 15}k</Text>
@@ -88,6 +107,11 @@ const styles = StyleSheet.create({
     color: "#94A3B8",
     fontSize: 12,
     fontWeight: '500'
+  },
+  lifecycleBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   dot: {
     width: 4,

@@ -6,7 +6,7 @@ import { NavigatorScreenParams, CompositeScreenProps } from '@react-navigation/n
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { ROUTES } from './routes';
-import { Trend } from '../store/slices/trendsApi';
+import { ExtendedTrend } from '../types/trend';
 
 // Top-Level Root Stack Param List
 export type RootStackParamList = {
@@ -14,17 +14,18 @@ export type RootStackParamList = {
   [ROUTES.LOGIN]: undefined;
   [ROUTES.REGISTER]: undefined;
   [ROUTES.MAIN_TABS]: NavigatorScreenParams<MainTabParamList>;
-  [ROUTES.TREND_DETAIL]: { item: Trend };
+  [ROUTES.TREND_DETAIL]: { item: ExtendedTrend };
   [ROUTES.CATEGORY_TRENDS]: { category: string };
   [ROUTES.NOTIFICATIONS]: undefined;
-  [ROUTES.TREND_ANALYSIS]: { item: Trend };
-  [ROUTES.TREND_GRAPH]: { item: Trend };
-  [ROUTES.AI_CHAT]: { trendContext?: { title: string; content?: string; sourceUrl?: string } } | undefined;
+  [ROUTES.TREND_ANALYSIS]: { item: ExtendedTrend };
+  [ROUTES.TREND_GRAPH]: { item: ExtendedTrend };
+  [ROUTES.AI_CHAT]: { trendContext?: { title: string; content?: string; sourceUrl?: string; trendId?: string; id?: string } } | undefined;
   [ROUTES.GEO_HEATMAP]: undefined;
   [ROUTES.PROFILE]: undefined;
   [ROUTES.EDIT_PROFILE]: undefined;
   [ROUTES.SECURITY]: undefined;
   [ROUTES.CHANGE_PASSWORD]: undefined;
+  [ROUTES.ADMIN_DASHBOARD]: undefined;
 };
 
 // Central Bottom Tabs Param List

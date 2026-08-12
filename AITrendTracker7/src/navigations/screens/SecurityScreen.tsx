@@ -11,7 +11,6 @@ import {
   Platform,
 } from "react-native";
 import Feather from "react-native-vector-icons/Feather";
-import FontAwesome from "react-native-vector-icons/FontAwesome";
 import LinearGradient from "react-native-linear-gradient";
 import {
   getAuth,
@@ -48,7 +47,7 @@ export default function SecurityScreen({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const { data: profileRes, refetch: refetchProfile } = useGetUserProfileQuery();
+  const { data: profileRes } = useGetUserProfileQuery();
   const backendUser = profileRes?.data;
 
   useEffect(() => {
@@ -148,6 +147,7 @@ export default function SecurityScreen({ navigation }: Props) {
           style: "destructive",
           onPress: async () => {
             setDeleting(true);
+            let success = false;
             try {
               // 1. Re-authenticate
               if (isGoogleUser) {
@@ -181,14 +181,17 @@ export default function SecurityScreen({ navigation }: Props) {
               // 4. Dispatch logout to clear Redux auth credentials
               dispatch(logout());
 
+              success = true;
               setDeleteModalVisible(false);
               Alert.alert("Account Deleted", "Your account and data have been permanently deleted.");
             } catch (error: any) {
               console.log("Delete Account Error:", error);
               Alert.alert("Deletion Failed", error.message || "An error occurred during account deletion.");
             } finally {
-              setDeleting(false);
-              setPassword("");
+              if (!success) {
+                setDeleting(false);
+                setPassword("");
+              }
             }
           },
         },
@@ -197,7 +200,7 @@ export default function SecurityScreen({ navigation }: Props) {
   };
 
   return (
-    <Screen scrollable={true}>
+    <Screen scrollable={true} bottomOffset={40}>
       <Header title="Account Security" showBack={true} onBack={() => navigation.goBack()} />
 
       <View style={styles.content}>
@@ -271,7 +274,7 @@ export default function SecurityScreen({ navigation }: Props) {
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={styles.cancelBtn}
+                style={[styles.cancelBtn, deleting && { opacity: 0.5 }]}
                 onPress={() => setDeleteModalVisible(false)}
                 disabled={deleting}
                 activeOpacity={0.7}

@@ -10,7 +10,7 @@ import {
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { Screen } from '../../components/common/Screen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getJSON, setJSON, remove } from '../../utils/storage';
 import { useSearchTrendsQuery } from '../../store/slices/trendsApi';
 import { ROUTES } from '../../navigation/routes';
 import { MainTabScreenProps } from '../../navigation/types';
@@ -42,7 +42,7 @@ export default function SearchScreen({ route, navigation }: MainTabScreenProps<t
     }
     const timer = setTimeout(() => {
       setDebouncedQuery(query.trim());
-    }, 400); // 400ms debounce
+    }, 250); // 250ms debounce — MMKV is sync so history access is instant
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -52,20 +52,29 @@ export default function SearchScreen({ route, navigation }: MainTabScreenProps<t
 
   const results = responseData?.data || [];
 
+  // Load recent searches synchronously from MMKV on mount
   React.useEffect(() => {
-    AsyncStorage.getItem('recentSearches').then(res => {
-      if (res) setRecentSearches(JSON.parse(res));
-      else setRecentSearches(['GPT-4', 'Midjourney Prompts', 'AI in Healthcare', 'Crypto Trends']);
-    });
+    const saved = getJSON<string[]>('trendpulse:search:recent');
+    setRecentSearches(saved ?? ['GPT-4', 'Midjourney Prompts', 'AI in Healthcare', 'Crypto Trends']);
   }, []);
 
   const handleChipPress = (text: string) => {
     setQuery(text);
     setDebouncedQuery(text);
+    persistSearch(text);
   };
 
-  const handleClearRecent = async () => {
-    await AsyncStorage.removeItem('recentSearches');
+  /** Persist a new query to the top of the recent-searches MMKV list (max 8). */
+  const persistSearch = (text: string) => {
+    if (!text.trim()) return;
+    const prev = getJSON<string[]>('trendpulse:search:recent') ?? [];
+    const updated = [text, ...prev.filter(s => s !== text)].slice(0, 8);
+    setJSON('trendpulse:search:recent', updated);
+    setRecentSearches(updated);
+  };
+
+  const handleClearRecent = () => {
+    remove('trendpulse:search:recent');
     setRecentSearches([]);
   };
 
@@ -151,7 +160,10 @@ export default function SearchScreen({ route, navigation }: MainTabScreenProps<t
                 <TouchableOpacity
                   key={item.trendId || index}
                   activeOpacity={0.85}
-                  onPress={() => navigation.navigate(ROUTES.TREND_DETAIL, { item })}
+                  onPress={() => {
+                    persistSearch(query.trim());
+                    navigation.navigate(ROUTES.TREND_DETAIL, { item });
+                  }}
                 >
                   <LinearGradient
                     colors={['rgba(30,27,46,0.9)', 'rgba(106,37,244,0.08)']}

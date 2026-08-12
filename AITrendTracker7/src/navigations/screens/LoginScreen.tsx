@@ -70,14 +70,16 @@ export default function LoginScreen({ navigation }: Props) {
   }, []);
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       Alert.alert("Error", "Please enter email and password");
       return;
     }
 
     setLoading(true);
+    let success = false;
     try {
       await signInWithEmailAndPassword(getAuth(), email.trim(), password);
+      success = true;
       // AuthGate will reactively switch stack, no manual replace needed.
     } catch (error: any) {
       if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
@@ -90,12 +92,13 @@ export default function LoginScreen({ navigation }: Props) {
         Alert.alert("Login Failed", error.message);
       }
     } finally {
-      setLoading(false);
+      if (!success) setLoading(false);
     }
   };
 
   const onGoogleButtonPress = async () => {
     setGoogleLoading(true);
+    let success = false;
 
     try {
       await GoogleSignin.hasPlayServices({
@@ -112,6 +115,7 @@ export default function LoginScreen({ navigation }: Props) {
 
       const googleCredential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(getAuth(), googleCredential);
+      success = true;
       // AuthGate will reactively switch stack, no manual replace needed.
     } catch (error: any) {
       console.log("Google Error:", error);
@@ -125,7 +129,7 @@ export default function LoginScreen({ navigation }: Props) {
         );
       }
     } finally {
-      setGoogleLoading(false);
+      if (!success) setGoogleLoading(false);
     }
   };
 
@@ -193,7 +197,7 @@ export default function LoginScreen({ navigation }: Props) {
                   <Text style={styles.forgot}>Forgot Password?</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={handleLogin} activeOpacity={0.8} disabled={loading}>
+                <TouchableOpacity onPress={handleLogin} activeOpacity={0.8} disabled={loading || googleLoading}>
                   <LinearGradient
                     colors={[colors.neon.purple, colors.neon.blue, colors.neon.cyan]}
                     start={{ x: 0, y: 0 }}
@@ -213,7 +217,7 @@ export default function LoginScreen({ navigation }: Props) {
 
               <Text style={styles.or}>OR CONTINUE WITH</Text>
 
-              <TouchableOpacity onPress={onGoogleButtonPress} style={styles.socialBtn} disabled={googleLoading} activeOpacity={0.8}>
+              <TouchableOpacity onPress={onGoogleButtonPress} style={styles.socialBtn} disabled={loading || googleLoading} activeOpacity={0.8}>
                 {googleLoading ? (
                   <ActivityIndicator color={colors.text.primary} size="small" />
                 ) : (
@@ -267,9 +271,10 @@ export default function LoginScreen({ navigation }: Props) {
                   
                   <View style={styles.modalButtons}>
                     <TouchableOpacity 
-                      style={styles.cancelBtn} 
+                      style={[styles.cancelBtn, sendingReset && { opacity: 0.5 }]} 
                       onPress={() => setForgotModalVisible(false)}
                       activeOpacity={0.7}
+                      disabled={sendingReset}
                     >
                       <Text style={styles.cancelBtnText}>Cancel</Text>
                     </TouchableOpacity>

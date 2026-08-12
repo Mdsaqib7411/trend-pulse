@@ -9,16 +9,15 @@ import {
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { TrendAnalysisSkeleton } from '../../components/SkeletonLoader';
-import { BASE_URL } from '../../utils/config';
+import { useGetAIAnalysisQuery } from '../../store/apiSlice';
 import PredictionDetailCard from '../../components/prediction/PredictionDetailCard';
+import ExplainabilityCard from '../../components/feed/ExplainabilityCard';
 import KeywordCloud from '../../components/ui/KeywordCloud';
 import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
 import { colors } from '../../theme/colors';
-import { spacing } from '../../theme/spacing';
-import { typography } from '../../theme/typography';
 
 const { width } = Dimensions.get('window');
 
@@ -26,29 +25,19 @@ type Props = RootStackScreenProps<typeof ROUTES.TREND_ANALYSIS>;
 
 export default function TrendAnalysisScreen({ route, navigation }: Props) {
   const item = route.params?.item || { title: "Trend Analysis" };
-  const [analysis, setAnalysis] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    const fetchAnalysis = async () => {
-      try {
-        const id = encodeURIComponent(item.trendId || item.id || "");
-        const res = await fetch(`${BASE_URL}/api/trends/${id}/analysis`);
-        const json = await res.json();
-        if (json.success) {
-          setAnalysis(json.data);
-        }
-      } catch (err) {
-        console.error("Analysis fetch error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchAnalysis();
-  }, [item]);
+  const trendId = item.trendId || item.id || "";
+  const { data: analysisResponse, isLoading: loading, refetch, isFetching } = useGetAIAnalysisQuery(trendId, {
+    skip: !trendId,
+  });
+  
+  const analysis = analysisResponse?.data || analysisResponse;
 
   return (
-    <Screen scrollable={true} safeAreaEdges={['top']}>
+    <Screen 
+      scrollable={true} 
+      safeAreaEdges={['top', 'bottom']}
+      bottomOffset={0}
+    >
       <Header title="AI Analysis" showBack={true} onBack={() => navigation.goBack()} />
 
       <View style={styles.scrollContent}>
@@ -118,11 +107,45 @@ export default function TrendAnalysisScreen({ route, navigation }: Props) {
               </>
             )}
 
+            {/* AI EXPLAINABILITY CARD (P1) */}
+            <ExplainabilityCard
+              reasoning={item.aiSummary || analysis.whyTrending || "AI analyzing the trajectory patterns."}
+              metrics={[
+                { label: 'Virality', value: `${analysis.viralityScore || 85}/100`, trend: 'up' },
+                { label: 'Sentiment', value: `${analysis.sentimentScore || 75}% Pos`, trend: (analysis.sentimentScore || 75) > 50 ? 'up' : 'down' },
+                { label: 'Base Confidence', value: `${item.aiConfidence || 85}%`, trend: 'neutral' },
+              ]}
+            />
+
+            {/* AI CONFIDENCE breakdown METRICS (P2) */}
+            <Text style={styles.sectionHeading}>AI Confidence Breakdown</Text>
+            <View style={styles.glassCard}>
+              <View style={{ marginBottom: 14 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ color: colors.text.primary, fontSize: 13, fontWeight: '600' }}>Source Consistency</Text>
+                  <Text style={{ color: colors.neon.green, fontSize: 13, fontWeight: '700' }}>{item.sourceConsistency || 80}%</Text>
+                </View>
+                <View style={styles.progressBarBg}>
+                  <LinearGradient colors={[colors.neon.green, '#10b981']} style={[styles.progressBarFill, { width: `${item.sourceConsistency || 80}%` }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
+                </View>
+              </View>
+
+              <View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ color: colors.text.primary, fontSize: 13, fontWeight: '600' }}>Data Completeness</Text>
+                  <Text style={{ color: colors.neon.cyan, fontSize: 13, fontWeight: '700' }}>{item.dataCompleteness || 85}%</Text>
+                </View>
+                <View style={styles.progressBarBg}>
+                  <LinearGradient colors={[colors.neon.cyan, '#4FACFE']} style={[styles.progressBarFill, { width: `${item.dataCompleteness || 85}%` }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
+                </View>
+              </View>
+            </View>
+
             {/* PREDICTION */}
             <PredictionDetailCard prediction={{
-              confidenceScore: analysis.confidence ? analysis.confidence / 100 : 0.85,
-              lifecycleState: analysis.lifecycleState || 'EMERGING',
-              predictionJustification: analysis.aiPrediction
+              confidenceScore: item.aiConfidence ? item.aiConfidence / 100 : 0.85,
+              lifecycleState: item.growthMomentum || 'EMERGING',
+              predictionJustification: analysis.aiPrediction || item.aiSummary || "Prediction justified by AI analysis of scoring matrices."
             }} />
 
             {/* KEYWORDS */}

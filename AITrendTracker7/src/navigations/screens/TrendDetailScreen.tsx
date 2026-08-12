@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -8,15 +8,16 @@ import {
   ImageBackground,
   Dimensions,
   Share,
+  ActivityIndicator,
+  Linking,
 } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
-import { getAuth } from '@react-native-firebase/auth';
-import { BASE_URL } from '../../utils/config';
 import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
+import { useBookmarkTrendMutation, useGetSavedTrendsQuery, useGetTrendByIdQuery } from '../../store/slices/trendsApi';
 import { colors } from '../../theme/colors';
 import { layout } from '../../theme/layout';
 
@@ -26,44 +27,55 @@ type Props = RootStackScreenProps<typeof ROUTES.TREND_DETAIL>;
 
 export default function TrendDetailScreen({ route, navigation }: Props) {
   const passedItem = (route.params?.item || {}) as any;
+  const passedId = passedItem.trendId || passedItem._id || passedItem.id || '0';
+
+  const { data: fetchedTrend, isLoading: isTrendLoading } = useGetTrendByIdQuery(passedId, {
+    skip: passedId === '0',
+  });
+
   const item = {
     ...passedItem,
-    id:       passedItem.trendId || passedItem._id || passedItem.id || '0',
-    trendId:  passedItem.trendId || passedItem._id || passedItem.id || '0',
-    title:    passedItem.title    || 'The Rise of AI Agents in Daily Life',
-    category: passedItem.category || 'AI',
-    time:     passedItem.time     || '2 hours ago',
-    readTime: passedItem.readTime || '5 min read',
-    author:   passedItem.author   || 'TrendPulse AI',
-    growth:   passedItem.growth   || '+120%',
-    content:  passedItem.content  ||
+    ...(fetchedTrend || {}),
+    id: passedId,
+    trendId: passedId,
+    title: fetchedTrend?.title || passedItem.title || 'The Rise of AI Agents in Daily Life',
+    category: fetchedTrend?.category || passedItem.category || 'AI',
+    time: fetchedTrend?.time || passedItem.time || '2 hours ago',
+    readTime: fetchedTrend?.readTime || passedItem.readTime || '5 min read',
+    author: fetchedTrend?.source || passedItem.author || 'TrendPulse AI',
+    growth: fetchedTrend?.growth || passedItem.growth || '+120%',
+    content: fetchedTrend?.aiSummary || passedItem.content ||
       'Artificial Intelligence is no longer just a backend technology. It is actively becoming a proactive agent in our daily lives. Recent developments show an 80% increase in autonomous AI agents that can book flights, manage calendars, and draft emails without explicit prompts.\n\nExperts predict that within the next two years, personal AI agents will be as ubiquitous as smartphones. This shift is driven by advancements in Large Language Models (LLMs) and context-aware computing.\n\nHowever, concerns about data privacy and over-reliance on AI remain. As these agents gain more access to our personal data, developers must ensure robust security protocols to prevent data breaches.',
-    image:    passedItem.image    ||
+    image: fetchedTrend?.image || passedItem.image ||
       'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=1000',
   };
 
-  const [saved, setSaved] = useState(false);
+  const [bookmarkTrend] = useBookmarkTrendMutation();
+  const { data: savedResponse } = useGetSavedTrendsQuery();
 
-  useEffect(() => {
-    // Optionally fetch initial status if needed
-  }, [item.id]);
+  // Derive saved state directly from cached RTK list
+  const saved = (savedResponse?.data ?? []).some(
+    (s: any) => (s.trendId || s._id || s.id) === item.id
+  );
 
   const toggleSave = async () => {
     try {
-      const currentUser = getAuth().currentUser;
-      if (!currentUser) return;
-      const token = await currentUser.getIdToken();
-      const res = await fetch(`${BASE_URL}/api/trends/bookmark`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trendId: item.id })
-      });
-      const json = await res.json();
-      if (json.success) setSaved(json.bookmarked);
+      await bookmarkTrend(item.id).unwrap();
     } catch (e) {
-      console.error(e);
+      console.error('Bookmark error:', e);
     }
   };
+
+  if (passedId !== '0' && isTrendLoading && !passedItem.content) {
+    return (
+      <Screen scrollable={false} safeAreaEdges={['top', 'bottom']}>
+        <Header title="" showBack={true} onBack={() => navigation.goBack()} />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background.primary }}>
+          <ActivityIndicator size="large" color={colors.neon.purple} />
+        </View>
+      </Screen>
+    );
+  }
 
   const handleShare = async () => {
     try {
@@ -71,7 +83,7 @@ export default function TrendDetailScreen({ route, navigation }: Props) {
         title: item.title,
         message: `📈 ${item.title}\n\nCategory: ${item.category} | ${item.readTime}\n\nRead more on TrendPulse AI`,
       });
-    } catch (e) {
+    } catch {
       // user cancelled
     }
   };
@@ -88,7 +100,7 @@ export default function TrendDetailScreen({ route, navigation }: Props) {
   );
 
   return (
-    <Screen scrollable={false} safeAreaEdges={['top']}>
+    <Screen scrollable={false} safeAreaEdges={['top', 'bottom']}>
       {/* ── HEADER ── */}
       <Header
         title=""
@@ -142,6 +154,85 @@ export default function TrendDetailScreen({ route, navigation }: Props) {
           {/* Body */}
           <Text style={styles.body}>{item.content}</Text>
 
+          {/* ── AI METRICS STRIP ── */}
+          <LinearGradient
+            colors={['rgba(106,37,244,0.08)', 'rgba(0,198,255,0.05)']}
+            style={styles.metricsStrip}
+          >
+            <Text style={styles.metricsLabel}>AI INTELLIGENCE</Text>
+            <View style={styles.metricsRow}>
+              {/* Growth */}
+              <View style={styles.metricChip}>
+                <Feather name="trending-up" size={13} color={colors.neon.green} />
+                <Text style={[styles.metricValue, { color: colors.neon.green }]}>{item.growth}</Text>
+                <Text style={styles.metricKey}>Growth</Text>
+              </View>
+
+              {/* Sentiment */}
+              <View style={styles.metricChip}>
+                <Feather name="activity" size={13} color={colors.neon.cyan} />
+                <Text style={[styles.metricValue, { color: colors.neon.cyan }]}>
+                  {item.sentiment || 'Positive'}
+                </Text>
+                <Text style={styles.metricKey}>Sentiment</Text>
+              </View>
+
+              {/* Confidence */}
+              <View style={styles.metricChip}>
+                <Feather name="cpu" size={13} color="#a855f7" />
+                <Text style={[styles.metricValue, { color: '#a855f7' }]}>
+                  {typeof item.aiConfidence === 'number' ? `${item.aiConfidence}%` : '85%'}
+                </Text>
+                <Text style={styles.metricKey}>AI Conf.</Text>
+              </View>
+            </View>
+
+            {/* Target Audience */}
+            {item.targetAudience ? (
+              <View style={styles.audienceRow}>
+                <Feather name="users" size={12} color={colors.text.tertiary} style={{ marginRight: 6 }} />
+                <Text style={styles.audienceText}>{item.targetAudience}</Text>
+              </View>
+            ) : null}
+
+            {/* Score Breakdown (P2) */}
+            <View style={styles.scoreBreakdownContainer}>
+              <View style={styles.scoreRow}>
+                <View style={styles.scoreColumn}>
+                  <Text style={styles.scoreVal}>{item.viralScore || item.trendScore || 75}%</Text>
+                  <Text style={styles.scoreKey}>Viral Index</Text>
+                </View>
+                <View style={styles.scoreColumn}>
+                  <Text style={styles.scoreVal}>{item.trendScore || 75}%</Text>
+                  <Text style={styles.scoreKey}>Composite</Text>
+                </View>
+                <View style={styles.scoreColumn}>
+                  <Text style={styles.scoreVal}>{(item.engagementScore || 15)}k</Text>
+                  <Text style={styles.scoreKey}>Engagement</Text>
+                </View>
+              </View>
+            </View>
+          </LinearGradient>
+
+          {/* Visit Original Source Button (P0) */}
+          {item.sourceUrl ? (
+            <TouchableOpacity
+              style={styles.sourceBtn}
+              activeOpacity={0.85}
+              onPress={() => {
+                Linking.openURL(item.sourceUrl).catch(err => console.error("Failed to open source URL:", err));
+              }}
+            >
+              <LinearGradient
+                colors={['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.02)']}
+                style={styles.sourceGradient}
+              >
+                <Feather name="external-link" size={18} color={colors.neon.cyan} style={{ marginRight: 10 }} />
+                <Text style={styles.sourceText}>Visit Original Source</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          ) : null}
+
           {/* AI Analysis Button */}
           <TouchableOpacity
             style={styles.analyzeBtn}
@@ -178,7 +269,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay.light,
   },
   scrollContent: {
-    paddingBottom: layout.BOTTOM_TAB_OVERLAP_PADDING,
+    paddingBottom: 40,
   },
   heroImage: {
     width: width,
@@ -281,4 +372,101 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+  // AI Metrics Strip
+  metricsStrip: {
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(106,37,244,0.2)',
+  },
+  metricsLabel: {
+    color: colors.text.tertiary,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginBottom: 14,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  metricChip: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  metricValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  metricKey: {
+    color: colors.text.tertiary,
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  audienceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  audienceText: {
+    color: colors.text.secondary,
+    fontSize: 12,
+    flex: 1,
+  },
+  scoreBreakdownContainer: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  scoreColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  scoreVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text.primary,
+  },
+  scoreKey: {
+    color: colors.text.tertiary,
+    fontSize: 9,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  sourceBtn: {
+    height: 50,
+    borderRadius: 25,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.3)',
+    marginBottom: 16,
+  },
+  sourceGradient: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sourceText: {
+    color: colors.neon.cyan,
+    fontSize: 15,
+    fontWeight: '800',
+  },
 });
+

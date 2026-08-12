@@ -1,16 +1,19 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList,
 } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { AITypingSkeleton } from '../../components/SkeletonLoader';
-import { BASE_URL } from '../../utils/config';
 import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
 import { colors } from '../../theme/colors';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { getJSON, setJSON } from '../../utils/storage';
+import { useSendAIMessageMutation } from '../../store/apiSlice';
 
 type Message = {
   id: string;
@@ -22,22 +25,46 @@ type Message = {
 type Props = RootStackScreenProps<typeof ROUTES.AI_CHAT>;
 
 export default function AIChatScreen({ route, navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const trendContext = route.params?.trendContext;
   const trendTitle = trendContext?.title;
+  const contextId = trendContext?.trendId || trendContext?.id || 'general';
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: trendTitle
-        ? `Hello! I see you're exploring the trend:\n"${trendTitle}"\n\nWhat would you like to know about it?`
-        : "Hello! I am Shahkal AI, your advanced trend intelligence assistant. Ask me anything!",
-      sender: 'ai',
-      timestamp: new Date()
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
+  const [sendAIMessage] = useSendAIMessageMutation();
   const [isLoading, setIsLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+
+  // Helper to update state and synchronize with MMKV history safely
+  const updateMessages = (newMessages: Message[] | ((prev: Message[]) => Message[])) => {
+    setMessages(prev => {
+      const next = typeof newMessages === 'function' ? newMessages(prev) : newMessages;
+      const key = `trendpulse:chat:history:${contextId}`;
+      setJSON(key, next);
+      return next;
+    });
+  };
+
+  // Load chat history from MMKV on mount or context change
+  useEffect(() => {
+    const key = `trendpulse:chat:history:${contextId}`;
+    const cached = getJSON<Message[]>(key);
+    if (cached && cached.length > 0) {
+      setMessages(cached.map(m => ({ ...m, timestamp: new Date(m.timestamp) })));
+    } else {
+      setMessages([
+        {
+          id: '1',
+          text: trendTitle
+            ? `Hello! I see you're exploring the trend:\n"${trendTitle}"\n\nWhat would you like to know about it?`
+            : "Hello! I am Shahkal AI, your advanced trend intelligence assistant. Ask me anything!",
+          sender: 'ai',
+          timestamp: new Date()
+        }
+      ]);
+    }
+  }, [contextId, trendTitle]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -49,7 +76,7 @@ export default function AIChatScreen({ route, navigation }: Props) {
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    updateMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsLoading(true);
 
@@ -60,28 +87,22 @@ export default function AIChatScreen({ route, navigation }: Props) {
         parts: [{ text: m.text }]
       }));
 
-      const response = await fetch(`${BASE_URL}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage.text,
-          trendContext: trendContext || undefined,
-          history: history
-        })
-      });
+      const response = await sendAIMessage({
+        message: userMessage.text,
+        trendId: trendContext?.trendId || trendContext?.id || undefined,
+        history: history
+      }).unwrap();
 
-      const json = await response.json();
-
-      if (json.success) {
+      if (response.success) {
         const aiMessage: Message = {
           id: (Date.now() + 1).toString(),
-          text: json.data.reply,
+          text: response.data.reply,
           sender: 'ai',
           timestamp: new Date()
         };
-        setMessages(prev => [...prev, aiMessage]);
+        updateMessages(prev => [...prev, aiMessage]);
       } else {
-        throw new Error(json.message);
+        throw new Error(response.message);
       }
     } catch (error) {
       console.error("Chat error:", error);
@@ -91,7 +112,7 @@ export default function AIChatScreen({ route, navigation }: Props) {
         sender: 'ai',
         timestamp: new Date()
       };
-      setMessages(prev => [...prev, errorMessage]);
+      updateMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +165,7 @@ export default function AIChatScreen({ route, navigation }: Props) {
 
         {isLoading && <AITypingSkeleton />}
 
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, { paddingBottom: Math.max(15, insets.bottom) }]}>
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.input}

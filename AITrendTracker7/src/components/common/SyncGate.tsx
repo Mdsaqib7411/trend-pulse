@@ -5,6 +5,8 @@ import { useAppDispatch } from '../../store/hooks';
 import { setCredentials, logout } from '../../store/slices/authSlice';
 import { setUserLocation } from '../../store/slices/geoSlice';
 import { BASE_URL } from '../../utils/config';
+import { getJSON, setAuthToken, clearAuth } from '../../utils/storage';
+import { registerTokenWithBackend } from '../../services/fcmService';
 
 // Firebase JWTs expire after 60 minutes. Refresh every 55 min with a 5 min safety margin.
 const TOKEN_REFRESH_MS = 55 * 60 * 1000;
@@ -52,6 +54,7 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
 
       if (!firebaseUser) {
         dispatch(logout());
+        clearAuth();
         return;
       }
 
@@ -62,6 +65,7 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
       try {
         // ── Step 1: Mint fresh JWT, seed Redux auth ───────────────────────
         const token = await firebaseUser.getIdToken(/* forceRefresh */ false);
+        setAuthToken(token);
         dispatch(
           setCredentials({
             user: {
@@ -73,6 +77,12 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
             token,
           })
         );
+
+        // Safely register cached FCM token with backend now that user credentials are set in store
+        const cachedToken = getJSON<string>('trendpulse:fcm:token');
+        if (cachedToken) {
+          registerTokenWithBackend(cachedToken);
+        }
 
         const headers = {
           'Content-Type': 'application/json',
@@ -124,6 +134,7 @@ export function SyncGate({ children }: { children: React.ReactNode }) {
             const currentUser = getAuth().currentUser;
             if (!currentUser) return;
             const freshToken = await currentUser.getIdToken(/* forceRefresh */ true);
+            setAuthToken(freshToken);
             dispatch(
               setCredentials({
                 user: {

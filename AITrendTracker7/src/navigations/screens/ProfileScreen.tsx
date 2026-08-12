@@ -35,6 +35,7 @@ const MENU_ITEMS = [
   { key: 'saved',         icon: 'bookmark', label: 'Saved Posts',     color: colors.neon.cyan,   bg: colors.overlay.cyanGlow },
   { key: 'security',      icon: 'shield', label: 'Account Security',  color: colors.neon.blue,   bg: 'rgba(37, 99, 235, 0.15)' },
   { key: 'notifications', icon: 'bell',   label: 'Notifications',     color: colors.neon.green,  bg: 'rgba(74, 222, 128, 0.12)' },
+  { key: 'admin',         icon: 'activity', label: 'Admin Intelligence', color: colors.neon.pink,   bg: 'rgba(255, 0, 122, 0.15)' },
 ] as const;
 
 type MenuKey = typeof MENU_ITEMS[number]['key'];
@@ -52,12 +53,33 @@ export default function ProfileScreen({ navigation }: RootStackScreenProps<typeo
   const { data: profileRes, isLoading: isProfileLoading, refetch: refetchProfile } = useGetUserProfileQuery();
   const backendUser = profileRes?.data;
 
+  const isFirstRender = React.useRef(true);
+
   useFocusEffect(
     React.useCallback(() => {
-      refetchProfile();
-      // Refresh Firebase user so emailVerified reflects latest state
+      // Prevent duplicate request on initial mount
+      if (isFirstRender.current) {
+        isFirstRender.current = false;
+      } else {
+        refetchProfile();
+      }
+      
+      // Force Firebase user reload to get the latest emailVerified status
       const refreshed = getAuth().currentUser;
-      if (refreshed) setUser(refreshed);
+      if (refreshed) {
+        refreshed.reload().then(() => {
+          const freshUser = getAuth().currentUser;
+          if (freshUser) {
+            setUser({
+              uid: freshUser.uid,
+              displayName: freshUser.displayName,
+              email: freshUser.email,
+              photoURL: freshUser.photoURL,
+              emailVerified: freshUser.emailVerified,
+            });
+          }
+        }).catch(() => {});
+      }
     }, [refetchProfile])
   );
 
@@ -65,7 +87,13 @@ export default function ProfileScreen({ navigation }: RootStackScreenProps<typeo
     // Get current user
     const currentUser = getAuth().currentUser;
     if (currentUser) {
-      setUser(currentUser);
+      setUser({
+        uid: currentUser.uid,
+        displayName: currentUser.displayName,
+        email: currentUser.email,
+        photoURL: currentUser.photoURL,
+        emailVerified: currentUser.emailVerified,
+      });
     }
   }, []);
 
@@ -257,11 +285,14 @@ export default function ProfileScreen({ navigation }: RootStackScreenProps<typeo
       case 'notifications':
         navigation.navigate(ROUTES.NOTIFICATIONS);
         break;
+      case 'admin':
+        navigation.navigate(ROUTES.ADMIN_DASHBOARD);
+        break;
     }
   };
 
   return (
-    <Screen scrollable={true}>
+    <Screen scrollable={true} bottomOffset={40}>
       <Header title="Profile" showBack={true} onBack={() => navigation.goBack()} />
 
       {/* PROFILE INFO */}

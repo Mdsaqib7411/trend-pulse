@@ -1,4 +1,5 @@
-import { apiSlice } from '../apiSlice';
+import { apiSlice, mapBackendTrend } from '../apiSlice';
+import { ExtendedTrend } from '../../types/trend';
 
 export interface Trend {
   trendId: string;
@@ -38,21 +39,42 @@ export interface TrendAnalytics {
 
 export const trendsApi = apiSlice.injectEndpoints({
   endpoints: (builder) => ({
-    getTrending: builder.query<{ success: boolean; data: Trend[] }, string>({
+    getTrending: builder.query<{ success: boolean; data: ExtendedTrend[] }, string>({
       query: (tab) => {
         let endpoint = '/trends/explore';
         if (tab === 'For You') endpoint = '/trends/foryou';
         else if (tab === 'Emerging') endpoint = '/trends/emerging';
         return endpoint;
       },
+      transformResponse: (response: any) => {
+        const rawData = Array.isArray(response) ? response : (response?.data || []);
+        return {
+          success: response?.success ?? true,
+          data: rawData.map(mapBackendTrend)
+        };
+      },
       providesTags: ['Trend'],
     }),
-    getForYou: builder.query<{ success: boolean; data: Trend[] }, void>({
+    getForYou: builder.query<{ success: boolean; data: ExtendedTrend[] }, void>({
       query: () => '/trends/foryou',
+      transformResponse: (response: any) => {
+        const rawData = Array.isArray(response) ? response : (response?.data || []);
+        return {
+          success: response?.success ?? true,
+          data: rawData.map(mapBackendTrend)
+        };
+      },
       providesTags: ['Trend'],
     }),
-    searchTrends: builder.query<{ success: boolean; data: Trend[] }, string>({
+    searchTrends: builder.query<{ success: boolean; data: ExtendedTrend[] }, string>({
       query: (query) => `/trends/search?q=${encodeURIComponent(query)}`,
+      transformResponse: (response: any) => {
+        const rawData = Array.isArray(response) ? response : (response?.data || []);
+        return {
+          success: response?.success ?? true,
+          data: rawData.map(mapBackendTrend)
+        };
+      },
       providesTags: ['Trend'],
     }),
     getTrendAnalytics: builder.query<{ success: boolean; data: TrendAnalytics }, string>({
@@ -63,8 +85,15 @@ export const trendsApi = apiSlice.injectEndpoints({
       query: (id) => `/trends/${encodeURIComponent(id)}/prediction`,
       providesTags: ['Trend'],
     }),
-    getCategoryTrends: builder.query<{ success: boolean; data: Trend[] }, string>({
+    getCategoryTrends: builder.query<{ success: boolean; data: ExtendedTrend[] }, string>({
       query: (category) => category === 'All' ? '/trends/explore' : `/trends/category?type=${encodeURIComponent(category)}`,
+      transformResponse: (response: any) => {
+        const rawData = Array.isArray(response) ? response : (response?.data || []);
+        return {
+          success: response?.success ?? true,
+          data: rawData.map(mapBackendTrend)
+        };
+      },
       providesTags: ['Trend'],
     }),
     getTrendHistory: builder.query<any, { id: string; timeframe: string }>({
@@ -83,6 +112,14 @@ export const trendsApi = apiSlice.injectEndpoints({
       }),
       invalidatesTags: ['User', 'Trend'],
     }),
+    getTrendById: builder.query<any, string>({
+      query: (id) => `/trends/${encodeURIComponent(id)}`,
+      transformResponse: (response: any) => {
+        const item = response?.data || response;
+        return mapBackendTrend(item);
+      },
+      providesTags: (result, error, id) => [{ type: 'Trend', id }],
+    }),
   }),
   overrideExisting: true,
 });
@@ -99,4 +136,5 @@ export const {
   useLazyGetTrendHistoryQuery,
   useGetSavedTrendsQuery,
   useBookmarkTrendMutation,
+  useGetTrendByIdQuery,
 } = trendsApi;

@@ -9,6 +9,17 @@ interface Props {
   onPress: (item: Trend) => void;
 }
 
+const getLifecycleColor = (state: string) => {
+  switch(state.toLowerCase()) {
+    case 'emerging': return '#0ea5e9';
+    case 'accelerating': return '#00F2FE';
+    case 'viral': return '#a855f7';
+    case 'declining': return '#f43f5e';
+    case 'dead': return '#64748b';
+    default: return '#0ea5e9';
+  }
+};
+
 const TrendCard = ({ item, onPress }: Props) => {
   return (
     <TouchableOpacity activeOpacity={0.9} onPress={() => onPress(item)}>
@@ -24,10 +35,36 @@ const TrendCard = ({ item, onPress }: Props) => {
           colors={['transparent', 'rgba(10,5,20,0.6)', 'rgba(5,5,10,0.95)']}
           style={styles.trendOverlay}
         >
-          <View style={styles.trendTag}>
-            <Text style={styles.trendTagText}>#{item.category.replace(/\s+/g, '')}</Text>
+          <View style={styles.headerRow}>
+            <View style={styles.trendTag}>
+              <Text style={styles.trendTagText}>#{item.category.replace(/\s+/g, '')}</Text>
+            </View>
+            {item.growthMomentum ? (
+              <View style={[styles.lifecycleBadge, { backgroundColor: getLifecycleColor(item.growthMomentum) + '20', borderColor: getLifecycleColor(item.growthMomentum) }]}>
+                <Text style={[styles.lifecycleText, { color: getLifecycleColor(item.growthMomentum) }]}>{item.growthMomentum}</Text>
+              </View>
+            ) : null}
           </View>
           <Text style={styles.trendCardTitle} numberOfLines={2}>{item.title}</Text>
+          
+          {/* Sparkline (P2) */}
+          {item.velocityHistory && item.velocityHistory.length > 0 ? (
+            <View style={styles.sparklineContainer}>
+              {item.velocityHistory.map((val, i) => (
+                <View 
+                  key={i} 
+                  style={[
+                    styles.sparklineBar, 
+                    { 
+                      height: Math.max(3, (val / 100) * 16), 
+                      backgroundColor: i === 6 ? '#00F2FE' : 'rgba(0, 242, 254, 0.4)' 
+                    }
+                  ]} 
+                />
+              ))}
+            </View>
+          ) : null}
+
           <View style={styles.trendFooter}>
             <Feather name="trending-up" color="#4ade80" size={14} />
             <Text style={styles.growthText}>{item.growth || '+85%'} velocity</Text>
@@ -74,6 +111,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  lifecycleBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  lifecycleText: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  sparklineContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 16,
+    gap: 3,
+    marginBottom: 10,
+  },
+  sparklineBar: {
+    width: 6,
+    borderRadius: 2,
   },
   trendCardTitle: {
     color: '#FFFFFF',

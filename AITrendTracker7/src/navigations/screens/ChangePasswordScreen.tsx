@@ -63,6 +63,7 @@ export default function ChangePasswordScreen({ navigation }: Props) {
     }
 
     setLoading(true);
+    let success = false;
     try {
       const user = getAuth().currentUser;
       if (!user || !user.email) {
@@ -76,6 +77,7 @@ export default function ChangePasswordScreen({ navigation }: Props) {
       // 2. Update to new password
       await updatePassword(user, newPassword);
 
+      success = true;
       Alert.alert("Success", "Your password has been successfully updated.", [
         { text: "OK", onPress: () => navigation.goBack() }
       ]);
@@ -98,12 +100,12 @@ export default function ChangePasswordScreen({ navigation }: Props) {
       }
       Alert.alert("Update Failed", msg);
     } finally {
-      setLoading(false);
+      if (!success) setLoading(false);
     }
   };
 
   return (
-    <Screen scrollable={true} keyboardAvoiding={true}>
+    <Screen scrollable={false} keyboardAvoiding={true}>
       <Header title="Change Password" showBack={true} onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">

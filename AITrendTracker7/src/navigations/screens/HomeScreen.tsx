@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -6,11 +6,15 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
+  Animated,
+  RefreshControl,
 } from "react-native";
 import Feather from "react-native-vector-icons/Feather";
 import LinearGradient from "react-native-linear-gradient";
 import { Screen } from '../../components/common/Screen';
 import FeedList from '../../components/feed/FeedList';
+import EmergingCard from '../../components/feed/EmergingCard';
+import { PredictiveSkeleton } from '../../components/ui/PredictiveSkeletons';
 
 // Redux hooks
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -47,7 +51,7 @@ export default function HomeScreen({ navigation }: MainTabScreenProps<typeof ROU
     if (homeFeedResponse?.success && homeFeedResponse?.data?.length > 0) {
       const data = homeFeedResponse.data;
       dispatch(setLiveTrends(data.slice(0, 3)));
-      dispatch(setFastestRising(data.slice(3, 8)));
+      dispatch(setFastestRising(data.slice(3, 15)));
 
       const topEng = data.slice(0, 5).reduce((acc: number, curr: any) => acc + (curr.engagementScore || 10), 0);
       dispatch(updatePulseScore(Math.min(99, Math.max(50, Math.floor(topEng / 2)))));
@@ -57,6 +61,31 @@ export default function HomeScreen({ navigation }: MainTabScreenProps<typeof ROU
   const handleTrendPress = useCallback((item: Trend) => {
     navigation.navigate(ROUTES.TREND_DETAIL, { item });
   }, [navigation]);
+
+  // Live pulse animation — breathes faster when score is high
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const duration = pulseScore > 75 ? 900 : pulseScore > 50 ? 1400 : 2000;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.18, duration, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseScore]);
+
+  // Derive sentiment label & color from live pulse score
+  const sentimentLabel =
+    pulseScore >= 80 ? 'Hyperactive' :
+      pulseScore >= 65 ? 'Bullish' :
+        pulseScore >= 45 ? 'Neutral' : 'Cooling';
+
+  const sentimentColor =
+    pulseScore >= 80 ? colors.neon.cyan :
+      pulseScore >= 65 ? colors.neon.green :
+        pulseScore >= 45 ? '#f59e0b' : '#ef4444';
 
   return (
     <Screen scrollable={false}>
@@ -94,6 +123,14 @@ export default function HomeScreen({ navigation }: MainTabScreenProps<typeof ROU
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isFetching}
+            onRefresh={refetch}
+            tintColor={colors.neon.cyan}
+            colors={[colors.neon.cyan, colors.neon.purple]}
+          />
+        }
       >
         <View style={styles.ambientGlow} />
 
@@ -106,14 +143,17 @@ export default function HomeScreen({ navigation }: MainTabScreenProps<typeof ROU
         >
           <View>
             <Text style={styles.sentimentTitle}>Global AI Pulse</Text>
-            <Text style={styles.positive}>Hyperactive</Text>
-            <View style={styles.badge}>
-              <Feather name="activity" size={14} color={colors.neon.cyan} style={{ marginRight: 6 }} />
-              <Text style={styles.percent}>High Engagement</Text>
+            <Text style={[styles.positive, { color: sentimentColor }]}>{sentimentLabel}</Text>
+            <View style={[styles.badge, { backgroundColor: `${sentimentColor}22` }]}>
+              <Feather name="activity" size={14} color={sentimentColor} style={{ marginRight: 6 }} />
+              <Text style={[styles.percent, { color: sentimentColor }]}>
+                {pulseScore >= 80 ? 'High Engagement' : pulseScore >= 65 ? 'Growing Fast' : pulseScore >= 45 ? 'Steady' : 'Slowing'}
+              </Text>
             </View>
           </View>
 
           <View style={styles.circleContainer}>
+            <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }], borderColor: `${sentimentColor}44` }]} />
             <LinearGradient colors={gradients.button as any} style={styles.circleBg}>
               <View style={styles.circleInner}>
                 <Text style={styles.circleText}>{pulseScore}</Text>
@@ -144,15 +184,24 @@ export default function HomeScreen({ navigation }: MainTabScreenProps<typeof ROU
           <Text style={styles.sectionTitle}>Rising Fast</Text>
         </View>
 
-        <FeedList
-          data={fastestRising}
-          isHorizontal={false}
-          onTrendPress={handleTrendPress}
-          type="emerging"
-          refreshing={isFetching}
-          onRefresh={refetch}
-          isLoading={isLoading}
-        />
+        {isLoading ? (
+          <View style={{ paddingBottom: 20 }}>
+            <PredictiveSkeleton isVisible={true} type="card" />
+            <PredictiveSkeleton isVisible={true} type="card" />
+            <PredictiveSkeleton isVisible={true} type="card" />
+          </View>
+        ) : (
+          <View style={{ paddingBottom: 20 }}>
+            {fastestRising.map((item, index) => (
+              <EmergingCard
+                key={item.trendId || index.toString()}
+                item={item}
+                index={index}
+                onPress={handleTrendPress}
+              />
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       {/* AI Chat FAB */}
@@ -184,14 +233,15 @@ const styles = StyleSheet.create({
   positive: { color: colors.text.primary, fontSize: 28, fontWeight: typography.weight.black, letterSpacing: 0.5 },
   badge: { flexDirection: "row", alignItems: "center", backgroundColor: 'rgba(0, 242, 254, 0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginTop: 10, alignSelf: "flex-start" },
   percent: { color: colors.neon.cyan, fontSize: 12, fontWeight: typography.weight.bold },
-  circleContainer: { justifyContent: "center", alignItems: "center" },
+  circleContainer: { justifyContent: "center", alignItems: "center", position: 'relative' },
+  pulseRing: { position: 'absolute', width: 92, height: 92, borderRadius: 46, borderWidth: 2 },
   circleBg: { width: 76, height: 76, borderRadius: 38, padding: 3, justifyContent: 'center', alignItems: 'center' },
   circleInner: { width: '100%', height: '100%', borderRadius: 35, backgroundColor: '#0A0515', justifyContent: 'center', alignItems: 'center' },
   circleText: { color: colors.text.primary, fontWeight: typography.weight.black, fontSize: 24 },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: spacing.screenPadding, marginBottom: 15 },
   sectionTitle: { color: colors.text.primary, fontSize: 20, fontWeight: typography.weight.black, letterSpacing: 0.5 },
   viewAll: { color: colors.neon.cyan, fontSize: 14, fontWeight: typography.weight.semiBold },
-  fab: { position: 'absolute', bottom: 120, right: 20, width: 60, height: 60, borderRadius: 30, elevation: 8, zIndex: 10 },
+  fab: { position: 'absolute', bottom: 120, right: 20, width: 60, height: 60, borderRadius: 30, elevation: 8, zIndex: 9999 },
   fabInner: { flex: 1, borderRadius: 30, justifyContent: 'center', alignItems: 'center' },
   fabSparkle: { position: 'absolute', top: 12, right: 12 },
   scrollContent: {

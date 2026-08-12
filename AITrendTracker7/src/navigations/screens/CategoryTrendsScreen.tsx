@@ -21,6 +21,8 @@ import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
+import { useScrollToTop } from '@react-navigation/native';
+import { TrendCardSkeleton } from '../../components/SkeletonLoader';
 
 const CATEGORIES = [
   'All', 
@@ -31,6 +33,9 @@ const CATEGORIES = [
 type Props = RootStackScreenProps<typeof ROUTES.CATEGORY_TRENDS>;
 
 export default function CategoryTrendsScreen({ route, navigation }: Props) {
+  const scrollViewRef = React.useRef<ScrollView>(null);
+  useScrollToTop(scrollViewRef);
+
   const initialCategory = route.params?.category || 'All';
   const [activeCategory, setActiveCategory] = useState(initialCategory);
 
@@ -51,7 +56,7 @@ export default function CategoryTrendsScreen({ route, navigation }: Props) {
   };
 
   return (
-    <Screen scrollable={false} safeAreaEdges={['top']}>
+    <Screen scrollable={false} safeAreaEdges={['top', 'bottom']}>
       <Header title="Categories" showBack={true} onBack={() => navigation.goBack()} />
 
       {/* CATEGORY PILLS */}
@@ -79,7 +84,7 @@ export default function CategoryTrendsScreen({ route, navigation }: Props) {
       </View>
 
       {/* TRENDS LIST */}
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
+      <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContainer}>
         {loading ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>Loading trends...</Text>

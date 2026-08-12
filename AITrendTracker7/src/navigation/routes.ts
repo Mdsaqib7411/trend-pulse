@@ -29,6 +29,7 @@ export const ROUTES = {
   TREND_GRAPH: 'TrendGraph',
   AI_CHAT: 'AIChat',
   GEO_HEATMAP: 'GeoHeatmap',
+  ADMIN_DASHBOARD: 'AdminDashboard',
 } as const;
 
 export type RouteName = typeof ROUTES[keyof typeof ROUTES];

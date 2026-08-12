@@ -1,102 +1,118 @@
-import React from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  RefreshControl
+  RefreshControl,
+  FlatList,
 } from 'react-native';
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import LinearGradient from 'react-native-linear-gradient';
 import { Screen } from '../../components/common/Screen';
 import Header from '../../components/common/Header';
-import { NotificationSkeleton } from '../../components/SkeletonLoader';
+import { useAppDispatch } from '../../store/hooks';
+import { setUnreadCount } from '../../store/slices/notificationsSlice';
 import {
   useGetNotificationsQuery,
   useMarkAllNotificationsReadMutation,
   useClearAllNotificationsMutation,
-  useMarkSingleNotificationReadMutation
+  useMarkSingleNotificationReadMutation,
+  Notification as DBNotification,
 } from '../../store/slices/notificationApi';
+
+export type AppNotification = DBNotification;
 import { ROUTES } from '../../navigation/routes';
 import { RootStackScreenProps } from '../../navigation/types';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
+import { layout } from '../../theme/layout';
+
+const getIconData = (type: string) => {
+  switch (type) {
+    case 'hot_trend':
+      return { name: 'trending-up', gradientColors: ["rgba(239,68,68,0.2)", "rgba(239,68,68,0.05)"], iconColor: colors.neon.red };
+    case 'multi_source':
+      return { name: 'radio', gradientColors: ["rgba(168,85,247,0.2)", "rgba(168,85,247,0.05)"], iconColor: colors.neon.purple };
+    case 'viral_spike':
+      return { name: 'zap', gradientColors: ["rgba(0,242,254,0.2)", "rgba(0,242,254,0.05)"], iconColor: colors.neon.cyan };
+    case 'system':
+      return { name: 'file-text', gradientColors: ["rgba(251,191,36,0.2)", "rgba(251,191,36,0.05)"], iconColor: '#fbbf24' };
+    default:
+      return { name: 'bell', gradientColors: ["rgba(255,255,255,0.1)", "rgba(255,255,255,0.05)"], iconColor: colors.text.primary };
+  }
+};
+
+const getTimeAgo = (dateStr: string) => {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days === 1) return 'Yesterday';
+  return `${days}d ago`;
+};
 
 export default function NotificationsScreen({ navigation }: RootStackScreenProps<typeof ROUTES.NOTIFICATIONS>) {
-  const { data: responseData, isLoading, refetch } = useGetNotificationsQuery();
-  const notifications = responseData?.data || [];
-  const unreadCount = responseData?.unreadCount || 0;
+  const flatListRef = React.useRef<FlatList>(null);
+  useScrollToTop(flatListRef);
 
-  const [markAllReadMutation] = useMarkAllNotificationsReadMutation();
-  const [clearAllMutation] = useClearAllNotificationsMutation();
-  const [markSingleReadMutation] = useMarkSingleNotificationReadMutation();
+  const dispatch = useAppDispatch();
 
-  const [refreshing, setRefreshing] = React.useState(false);
+  const { data: notificationsData, isFetching: refreshing, refetch } = useGetNotificationsQuery();
+  const [markAllRead] = useMarkAllNotificationsReadMutation();
+  const [clearAll] = useClearAllNotificationsMutation();
+  const [markSingleRead] = useMarkSingleNotificationReadMutation();
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  };
+  const notifications = notificationsData?.data ?? [];
+  const unreadCount = notificationsData?.unreadCount ?? notifications.filter(n => !n.read).length;
 
-  const handleMarkAllRead = async () => {
+  useEffect(() => {
+    dispatch(setUnreadCount(unreadCount));
+  }, [unreadCount, dispatch]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
+
+  const onRefresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
+
+  const handleMarkAllRead = useCallback(async () => {
     try {
-      await markAllReadMutation().unwrap();
+      await markAllRead().unwrap();
+      dispatch(setUnreadCount(0));
     } catch (err) {
       console.error('Mark all read error:', err);
     }
-  };
+  }, [markAllRead, dispatch]);
 
-  const handleClearAllNotifications = async () => {
+  const handleClearAllNotifications = useCallback(async () => {
     try {
-      await clearAllMutation().unwrap();
+      await clearAll().unwrap();
+      dispatch(setUnreadCount(0));
     } catch (err) {
-      console.error('Clear all error:', err);
+      console.error('Clear all notifications error:', err);
     }
-  };
+  }, [clearAll, dispatch]);
 
-  const handleMarkSingleRead = async (id: string) => {
-    try {
-      await markSingleReadMutation(id).unwrap();
-    } catch (err) {
-      console.error('Mark read error:', err);
-    }
-  };
-
-  const getIconData = (type: string) => {
-    switch (type) {
-      case 'hot_trend':
-        return { name: 'trending-up', gradientColors: ["rgba(239,68,68,0.2)", "rgba(239,68,68,0.05)"], iconColor: colors.neon.red };
-      case 'multi_source':
-        return { name: 'radio', gradientColors: ["rgba(168,85,247,0.2)", "rgba(168,85,247,0.05)"], iconColor: colors.neon.purple };
-      case 'viral_spike':
-        return { name: 'zap', gradientColors: ["rgba(0,242,254,0.2)", "rgba(0,242,254,0.05)"], iconColor: colors.neon.cyan };
-      case 'system':
-        return { name: 'file-text', gradientColors: ["rgba(251,191,36,0.2)", "rgba(251,191,36,0.05)"], iconColor: '#fbbf24' };
-      default:
-        return { name: 'bell', gradientColors: ["rgba(255,255,255,0.1)", "rgba(255,255,255,0.05)"], iconColor: colors.text.primary };
-    }
-  };
-
-  const getTimeAgo = (dateStr: string) => {
-    const now = new Date();
-    const date = new Date(dateStr);
-    const diffMs = now.getTime() - date.getTime();
-    const mins = Math.floor(diffMs / 60000);
-    const hours = Math.floor(mins / 60);
-    const days = Math.floor(hours / 24);
-
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days === 1) return 'Yesterday';
-    return `${days}d ago`;
-  };
-
-  const handleNotificationPress = (item: any) => {
+  const handleNotificationPress = useCallback(async (item: AppNotification) => {
     if (!item.read) {
-      handleMarkSingleRead(item._id);
+      try {
+        await markSingleRead(item._id).unwrap();
+      } catch (err) {
+        console.error('Mark single read error:', err);
+      }
     }
 
     if (item.trendId) {
@@ -104,17 +120,58 @@ export default function NotificationsScreen({ navigation }: RootStackScreenProps
         item: { trendId: item.trendId, id: item.trendId, title: item.title } as any
       });
     }
-  };
+  }, [navigation, markSingleRead]);
+
+  const renderNotificationItem = useCallback(({ item }: { item: AppNotification }) => {
+    const { name, gradientColors, iconColor } = getIconData(item.type);
+
+    return (
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => handleNotificationPress(item)}
+      >
+        <LinearGradient
+          colors={item.read
+            ? ["rgba(20,15,30,0.4)", "rgba(20,15,30,0.2)"]
+            : ["rgba(0,242,254,0.08)", "rgba(106,37,244,0.06)"]
+          }
+          style={[styles.notificationCard, !item.read && styles.unreadBorder]}
+        >
+          <View style={styles.iconContainer}>
+            <LinearGradient colors={gradientColors as any} style={styles.iconBg}>
+              <Feather name={name} size={18} color={iconColor} />
+            </LinearGradient>
+            {!item.read && <View style={styles.unreadDot} />}
+          </View>
+
+          <View style={styles.contentContainer}>
+            <View style={styles.titleRow}>
+              <Text style={[styles.title, !item.read && styles.titleUnread]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <Text style={styles.time}>{getTimeAgo(item.createdAt)}</Text>
+            </View>
+            <Text style={styles.message} numberOfLines={2}>{item.message}</Text>
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  }, [handleNotificationPress]);
+
+  const keyExtractor = useCallback((item: AppNotification) => item._id, []);
+
+  const renderEmptyState = useCallback(() => (
+    <View style={styles.emptyContainer}>
+      <LinearGradient colors={["rgba(0,242,254,0.1)", "rgba(0,242,254,0.02)"]} style={styles.emptyIconBg}>
+        <Feather name="bell-off" size={40} color={colors.text.tertiary} />
+      </LinearGradient>
+      <Text style={styles.emptyTitle}>No Alerts Yet</Text>
+      <Text style={styles.emptySubtitle}>When trends start trending, you'll be the first to know!</Text>
+    </View>
+  ), []);
 
   return (
-    <Screen 
-      scrollable={true} 
-      scrollViewProps={{
-        refreshControl: (
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.neon.cyan} />
-        )
-      }}
-    >
+    <Screen scrollable={false}>
       <View style={styles.ambientGlow} />
 
       <Header
@@ -135,68 +192,22 @@ export default function NotificationsScreen({ navigation }: RootStackScreenProps
         }
       />
 
-      <View style={styles.listContainer}>
-        {isLoading ? (
-          [1, 2, 3, 4, 5].map((item) => (
-            <NotificationSkeleton key={item} />
-          ))
-        ) : notifications.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <LinearGradient colors={["rgba(0,242,254,0.1)", "rgba(0,242,254,0.02)"]} style={styles.emptyIconBg}>
-              <Feather name="bell-off" size={40} color={colors.text.tertiary} />
-            </LinearGradient>
-            <Text style={styles.emptyTitle}>No Alerts Yet</Text>
-            <Text style={styles.emptySubtitle}>When trends start trending, you'll be the first to know!</Text>
-          </View>
-        ) : (
-          <>
-            {/* Unread Count Badge */}
-            {unreadCount > 0 && (
-              <View style={styles.unreadBanner}>
-                <Feather name="bell" size={14} color={colors.neon.cyan} />
-                <Text style={styles.unreadBannerText}>{unreadCount} new alert{unreadCount > 1 ? 's' : ''}</Text>
-              </View>
-            )}
-
-            {notifications.map(item => {
-              const { name, gradientColors, iconColor } = getIconData(item.type);
-
-              return (
-                <TouchableOpacity
-                  key={item._id}
-                  activeOpacity={0.8}
-                  onPress={() => handleNotificationPress(item)}
-                >
-                  <LinearGradient
-                    colors={item.read
-                      ? ["rgba(20,15,30,0.4)", "rgba(20,15,30,0.2)"]
-                      : ["rgba(0,242,254,0.08)", "rgba(106,37,244,0.06)"]
-                    }
-                    style={[styles.notificationCard, !item.read && styles.unreadBorder]}
-                  >
-                    <View style={styles.iconContainer}>
-                      <LinearGradient colors={gradientColors as any} style={styles.iconBg}>
-                        <Feather name={name} size={18} color={iconColor} />
-                      </LinearGradient>
-                      {!item.read && <View style={styles.unreadDot} />}
-                    </View>
-
-                    <View style={styles.contentContainer}>
-                      <View style={styles.titleRow}>
-                        <Text style={[styles.title, !item.read && styles.titleUnread]} numberOfLines={1}>
-                          {item.title}
-                        </Text>
-                        <Text style={styles.time}>{getTimeAgo(item.createdAt)}</Text>
-                      </View>
-                      <Text style={styles.message} numberOfLines={2}>{item.message}</Text>
-                    </View>
-                  </LinearGradient>
-                </TouchableOpacity>
-              );
-            })}
-          </>
-        )}
-      </View>
+      <FlatList
+        ref={flatListRef}
+        data={notifications}
+        renderItem={renderNotificationItem}
+        keyExtractor={keyExtractor}
+        ListEmptyComponent={renderEmptyState}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.listContainer}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={3}
+        removeClippedSubviews={true}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.neon.cyan} />
+        }
+      />
     </Screen>
   );
 }
@@ -217,9 +228,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 2 }],
   },
   emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 40,
     marginTop: 80,
   },
@@ -253,29 +263,12 @@ const styles = StyleSheet.create({
   listContainer: {
     paddingHorizontal: spacing.screenPadding,
     paddingTop: spacing.sm,
-    paddingBottom: 40,
-  },
-  unreadBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 10,
-    borderRadius: 14,
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.15)',
-  },
-  unreadBannerText: {
-    color: colors.neon.cyan,
-    fontSize: typography.size.sm,
-    fontWeight: typography.weight.bold,
-    marginLeft: 10,
+    paddingBottom: layout.BOTTOM_TAB_OVERLAP_PADDING + 40,
   },
   notificationCard: {
     flexDirection: 'row',
     padding: spacing.lg,
-    borderRadius: spacing.cardRadius + 2,
+    borderRadius: spacing.cardRadius,
     marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.border.subtle,

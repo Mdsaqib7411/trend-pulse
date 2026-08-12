@@ -85,6 +85,11 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Only build x86_64 for emulator — prevents INSTALL_FAILED_INSUFFICIENT_STORAGE
+        // Remove or change to "arm64-v8a" when building for a real physical device
+        ndk {
+            abiFilters "x86_64"
+        }
     }
     signingConfigs {
         debug {

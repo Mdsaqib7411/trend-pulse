@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   reasoningText: {
     color: colors.text.primary,
     fontSize: typography.size.base,
-    lineHeight: typography.lineHeight.relaxed,
+    lineHeight: Math.round(typography.size.base * typography.lineHeight.relaxed),
     marginBottom: spacing.xl,
   },
   grid: {

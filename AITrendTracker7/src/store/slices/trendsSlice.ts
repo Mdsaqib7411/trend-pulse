@@ -12,6 +12,9 @@ export interface Trend {
   image?: string;
   time?: string;
   growth?: string;
+  velocityHistory?: number[];
+  growthMomentum?: string;
+  sourceUrl?: string;
 }
 
 export const trendsAdapter = createEntityAdapter<Trend, string>({

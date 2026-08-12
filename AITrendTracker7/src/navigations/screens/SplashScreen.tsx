@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Animated,
   Easing,
-  Dimensions,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import Feather from "react-native-vector-icons/Feather";
@@ -14,11 +13,12 @@ import { Screen } from "../../components/common/Screen";
 import { ROUTES } from "../../navigation/routes";
 import { RootStackScreenProps } from "../../navigation/types";
 import { colors } from "../../theme/colors";
-import { gradients } from "../../theme/gradients";
 
-const { width } = Dimensions.get("window");
+interface SplashScreenProps extends RootStackScreenProps<typeof ROUTES.SPLASH> {
+  onComplete?: () => void;
+}
 
-export default function SplashScreen({ navigation }: RootStackScreenProps<typeof ROUTES.SPLASH>) {
+export default function SplashScreen({ navigation, onComplete }: SplashScreenProps) {
   // Animation values
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -55,10 +55,14 @@ export default function SplashScreen({ navigation }: RootStackScreenProps<typeof
 
     const tryNavigate = () => {
       if (animDone && resolvedRoute) {
-        if (resolvedRoute === ROUTES.MAIN_TABS) {
-          navigation.replace(ROUTES.MAIN_TABS, undefined as any);
+        if (onComplete) {
+          onComplete();
         } else {
-          navigation.replace(ROUTES.LOGIN);
+          if (resolvedRoute === ROUTES.MAIN_TABS) {
+            navigation.replace(ROUTES.MAIN_TABS, undefined as any);
+          } else {
+            navigation.replace(ROUTES.LOGIN);
+          }
         }
       }
     };
@@ -84,7 +88,7 @@ export default function SplashScreen({ navigation }: RootStackScreenProps<typeof
     });
 
     return () => unsubAuth();
-  }, [navigation]);
+  }, [navigation, onComplete, fadeAnim, progressAnim, pulseAnim]);
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 100],
