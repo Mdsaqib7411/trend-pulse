@@ -17,6 +17,7 @@
 const Trend = require('../models/Trend');
 const cacheService = require('./cacheService');
 const logger = require('./loggerService');
+const { extractKeywords, computeOverlap } = require('../utils/keywordUtils');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const CLUSTER_OVERLAP_THRESHOLD = 0.65;
@@ -35,44 +36,17 @@ const ANOMALY = {
     QUARANTINE_SCORE: 0
 };
 
-// ─── Stop Words ─────────────────────────────────────────────────────────────
-const STOP_WORDS = new Set([
-    'the','a','an','is','are','was','were','be','been','being','have','has',
-    'had','do','does','did','will','would','could','should','may','might',
-    'shall','can','need','dare','ought','used','to','of','in','for','on',
-    'with','at','by','from','up','about','into','through','during','before',
-    'after','above','below','between','out','off','over','under','again',
-    'further','then','once','here','there','when','where','why','how','all',
-    'each','every','both','few','more','most','other','some','such','no',
-    'nor','not','only','own','same','so','than','too','very','just','and',
-    'but','or','if','while','as','that','this','it','its','what','which',
-    'who','whom','these','those','am','he','she','we','they','me','him',
-    'her','us','them','my','his','your','our','their','new','says','said','also'
-]);
-
 
 class TrendClusteringEngine {
 
     // ─── 1. KEYWORD EXTRACTION ──────────────────────────────────────────────
 
     extractKeywords(text) {
-        if (!text) return [];
-        return text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s]/g, '')
-            .split(/\s+/)
-            .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+        return extractKeywords(text);
     }
 
     computeOverlap(kwA, kwB) {
-        if (kwA.length === 0 || kwB.length === 0) return 0;
-        const setA = new Set(kwA);
-        const setB = new Set(kwB);
-        let intersection = 0;
-        for (const w of setA) {
-            if (setB.has(w)) intersection++;
-        }
-        return intersection / Math.min(setA.size, setB.size);
+        return computeOverlap(kwA, kwB);
     }
 
 

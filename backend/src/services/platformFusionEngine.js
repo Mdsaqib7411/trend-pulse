@@ -14,27 +14,11 @@
 
 const Trend = require('../models/Trend');
 const logger = require('./loggerService');
+const { extractKeywords, computeOverlap } = require('../utils/keywordUtils');
 
 const FUSION_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 const KEYWORD_OVERLAP_THRESHOLD = 0.85;
 const CROSS_PLATFORM_MULTIPLIER = 1.8;
-
-// Stop words to exclude from keyword extraction
-const STOP_WORDS = new Set([
-    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-    'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
-    'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
-    'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above',
-    'below', 'between', 'out', 'off', 'over', 'under', 'again', 'further',
-    'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all',
-    'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such',
-    'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-    'just', 'and', 'but', 'or', 'if', 'while', 'as', 'that', 'this', 'it',
-    'its', 'what', 'which', 'who', 'whom', 'these', 'those', 'am', 'he',
-    'she', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'his',
-    'your', 'our', 'their', 'new', 'says', 'said', 'also'
-]);
 
 class PlatformFusionEngine {
 
@@ -46,12 +30,7 @@ class PlatformFusionEngine {
      * @returns {string[]}
      */
     extractKeywords(text) {
-        if (!text) return [];
-        return text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s]/g, '')
-            .split(/\s+/)
-            .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+        return extractKeywords(text);
     }
 
     /**
@@ -59,15 +38,7 @@ class PlatformFusionEngine {
      * Returns a value in [0, 1].
      */
     computeOverlap(keywordsA, keywordsB) {
-        if (keywordsA.length === 0 || keywordsB.length === 0) return 0;
-        const setA = new Set(keywordsA);
-        const setB = new Set(keywordsB);
-        let intersection = 0;
-        for (const word of setA) {
-            if (setB.has(word)) intersection++;
-        }
-        const minLen = Math.min(setA.size, setB.size);
-        return minLen > 0 ? intersection / minLen : 0;
+        return computeOverlap(keywordsA, keywordsB);
     }
 
     /**
@@ -191,6 +162,22 @@ class PlatformFusionEngine {
         if (Object.keys(pushOps).length > 0) {
             updateQuery.$push = pushOps;
         }
+
+        // ─── CRITICAL BUG FIX: UPDATE IN-MEMORY REPRESENTATION ───
+        existingDoc.platformCount = platformCount;
+        existingDoc.crossPlatformMultiplier = multiplier;
+        existingDoc.engagementScore = (existingDoc.engagementScore || 0) + engagementBoost;
+
+        if (sourceEntry.key && sourceEntry.data) {
+            if (!existingDoc.sources) {
+                existingDoc.sources = { reddit: [], youtube: [], googleNews: [] };
+            }
+            if (!existingDoc.sources[sourceEntry.key]) {
+                existingDoc.sources[sourceEntry.key] = [];
+            }
+            existingDoc.sources[sourceEntry.key].push(sourceEntry.data);
+        }
+        // ────────────────────────────────────────────────────────
 
         try {
             await Trend.updateOne({ trendId: existingTrendId }, updateQuery);

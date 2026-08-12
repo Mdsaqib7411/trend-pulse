@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Trend = require('../models/Trend');
+const { UserActivity } = require('../models/UserActivity');
 
 class UserService {
     async syncUser(userData) {
@@ -59,6 +60,79 @@ class UserService {
         // Fetch full trend details for all saved trendIds
         const trends = await Trend.find({ trendId: { $in: user.savedTrends } });
         return trends;
+    }
+
+    async updateFcmToken(uid, fcmToken, platform) {
+        return await User.findOneAndUpdate(
+            { uid },
+            { 
+                $set: { 
+                    fcmToken,
+                    'session.platform': platform || 'unknown'
+                } 
+            },
+            { new: true }
+        );
+    }
+
+    async syncContinuity(uid, syncData) {
+        const user = await User.findOne({ uid });
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        // 1. Merge saved trends safely
+        const localSavedTrends = Array.isArray(syncData.savedTrends) ? syncData.savedTrends : [];
+        const dbSavedTrends = Array.isArray(user.savedTrends) ? user.savedTrends : [];
+        const mergedSavedTrends = [...new Set([...localSavedTrends, ...dbSavedTrends])];
+
+        // 2. Merge preferences & interests (Manual AI Memory configuration signals)
+        const localPref = Array.isArray(syncData.preferences) ? syncData.preferences : [];
+        const dbPref = Array.isArray(user.preferences) ? user.preferences : [];
+        const mergedPref = [...new Set([...localPref, ...dbPref])];
+
+        const localInt = Array.isArray(syncData.interests) ? syncData.interests : [];
+        const dbInt = Array.isArray(user.interests) ? user.interests : [];
+        const mergedInt = [...new Set([...localInt, ...dbInt])];
+
+        // 3. Merge recent searches safely (bounded to 15 entries for performance)
+        const localSearches = Array.isArray(syncData.recentSearches) ? syncData.recentSearches : [];
+        const dbSearches = Array.isArray(user.recentSearches) ? user.recentSearches : [];
+        const mergedRecentSearches = [...new Set([...localSearches, ...dbSearches])].slice(0, 15);
+
+        // 4. Record offline dynamic user interaction/affinity logs
+        const pendingActs = Array.isArray(syncData.pendingActivities) ? syncData.pendingActivities : [];
+        if (pendingActs.length > 0) {
+            await Promise.all(
+                pendingActs.map(async (act) => {
+                    try {
+                        await UserActivity.recordInteraction(
+                            uid,
+                            act.trendId,
+                            act.interactionType,
+                            act.category || 'General',
+                            act.keywords || []
+                        );
+                    } catch (err) {
+                        console.error('[UserService] Failed to record offline interaction:', err.message);
+                    }
+                })
+            );
+        }
+
+        // 5. Update user state
+        user.savedTrends = mergedSavedTrends;
+        user.preferences = mergedPref;
+        user.interests = mergedInt;
+        user.recentSearches = mergedRecentSearches;
+        await user.save();
+
+        return {
+            savedTrends: user.savedTrends,
+            preferences: user.preferences,
+            interests: user.interests,
+            recentSearches: user.recentSearches
+        };
     }
 }
 

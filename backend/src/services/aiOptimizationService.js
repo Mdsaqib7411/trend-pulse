@@ -9,7 +9,7 @@
 const Trend = require('../models/Trend');
 const logger = require('./loggerService');
 
-const VIRAL_SCORE_THRESHOLD = 65;
+const VIRAL_SCORE_THRESHOLD = 20;
 const KEYWORD_OVERLAP_THRESHOLD = 0.9;
 
 class AIOptimizationService {
@@ -62,7 +62,7 @@ class AIOptimizationService {
             trendId: { $ne: trend.trendId },
             updatedAt: { $gte: cutoff }
         }, {
-            title: 1, 'analysis': 1, 'analysis.keywords': 1
+            title: 1, 'analysis': 1
         }).limit(50).lean();
 
         for (const candidate of candidates) {

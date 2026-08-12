@@ -12,6 +12,7 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const cacheService = require('./cacheService');
 const socketService = require('./socketService');
+const pushNotificationService = require('./pushNotificationService');
 const logger = require('./loggerService');
 
 // FCM throttle: max 3 pushes per device per 2-hour window
@@ -198,34 +199,17 @@ class AlertService {
     }
 
     /**
-     * Send FCM push notification via Firebase Admin SDK.
+     * Send FCM push notification via reusable pushNotificationService.
      */
     async sendFCM(fcmToken, alertData) {
-        try {
-            const admin = require('firebase-admin');
-            if (!admin.apps.length) return;
-
-            await admin.messaging().send({
-                token: fcmToken,
-                notification: {
-                    title: alertData.title,
-                    body: alertData.message
-                },
-                data: {
-                    trendId: alertData.trendId || '',
-                    type: alertData.type || 'system'
-                },
-                android: {
-                    priority: 'high',
-                    notification: {
-                        channelId: 'trendpulse_alerts'
-                    }
-                }
-            });
-        } catch (err) {
-            // FCM token may be invalid/expired — log but don't throw
-            logger.warn('[AlertService] FCM send failed: %s', err.message);
-        }
+        await pushNotificationService.sendPushNotification(fcmToken, {
+            title: alertData.title,
+            body: alertData.message,
+            data: {
+                trendId: alertData.trendId || '',
+                type: alertData.type || 'system'
+            }
+        });
     }
 
     /**

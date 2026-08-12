@@ -16,6 +16,7 @@ const userSchema = new mongoose.Schema({
     interests: [{ type: String }],   // Granular keywords: ['GPT', 'robotics', 'NVIDIA']
     preferredSources: [{ type: String }], // e.g. ['YouTube', 'Reddit']
     savedTrends: [{ type: String }], // Array of trendIds (Strings)
+    recentSearches: [{ type: String }], // Bounded recent searches for cross-device sync
 
     // Geo-Intelligence Layer 1
     location: {
@@ -36,5 +37,7 @@ const userSchema = new mongoose.Schema({
 
 // Geo index for user location queries
 userSchema.index({ 'location.country': 1, 'location.state': 1 });
+// Sparse index on fcmToken for fast lookup during push notifications and stale token cleanups
+userSchema.index({ fcmToken: 1 }, { sparse: true });
 
 module.exports = mongoose.model('User', userSchema);

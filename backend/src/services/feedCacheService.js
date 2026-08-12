@@ -1,36 +1,50 @@
-/**
- * Phase 3.5 Step 4: Namespaced Advanced Feed Cache Layer & Adaptive Diversity.
- *
- * Provides a highly optimized Redis caching layer for personalized/geo feeds.
- * Uses a multi-tenant key schema and streams for granular cache invalidation.
- * Tracks user interactions to dynamically adjust feed diversity (e.g., reducing
- * global context if a user skips it frequently).
- */
-
-const Redis = require('ioredis');
+const { redisConnection, isRedisAvailable } = require('../config/redis');
 const logger = require('./loggerService');
 
-// Redis client (handles cluster commands and streams if configured) with robust failover rules
-const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
-    maxRetriesPerRequest: null,
-    retryStrategy(times) {
-        const delay = Math.min(times * 100, 3000);
-        logger.warn('[FeedCacheService Redis] Connection lost. Attempt %d. Reconnecting in %dms...', times, delay);
-        return delay;
+/**
+ * In-Memory cache storage to act as transparent fallback when Redis is offline.
+ * Implements Time-To-Live (TTL) expiration and periodic automatic cleanup.
+ */
+class MemoryCache {
+    constructor() {
+        this.cache = new Map();
+        // Periodically run cleanup every 60 seconds
+        this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+        if (this.cleanupInterval.unref) {
+            this.cleanupInterval.unref(); // Prevent blocking Node process from exiting
+        }
     }
-});
 
-redis.on('error', (err) => {
-    logger.error('[FeedCacheService] Redis error: %o', { error: err.message, stack: err.stack });
-});
+    set(key, value, ttlSeconds) {
+        const expiresAt = Date.now() + (ttlSeconds * 1000);
+        this.cache.set(key, { value, expiresAt });
+    }
 
-redis.on('ready', () => {
-    logger.info('[FeedCacheService] Connected to Redis successfully');
-});
+    get(key) {
+        const record = this.cache.get(key);
+        if (!record) return null;
+        if (Date.now() > record.expiresAt) {
+            this.cache.delete(key);
+            return null;
+        }
+        return record.value;
+    }
 
-redis.on('close', () => {
-    logger.warn('[FeedCacheService] Connection closed.');
-});
+    del(key) {
+        this.cache.delete(key);
+    }
+
+    cleanup() {
+        const now = Date.now();
+        for (const [key, record] of this.cache.entries()) {
+            if (now > record.expiresAt) {
+                this.cache.delete(key);
+            }
+        }
+    }
+}
+
+const memoryCache = new MemoryCache();
 
 class FeedCacheService {
     constructor() {
@@ -44,7 +58,7 @@ class FeedCacheService {
      * @returns {boolean}
      */
     isHealthy() {
-        return redis.status === 'ready';
+        return isRedisAvailable();
     }
 
     /**
@@ -66,14 +80,19 @@ class FeedCacheService {
      */
     async getCachedFeed(key) {
         if (!this.isHealthy()) {
-            logger.warn('[FeedCacheService] Redis offline. Operating in degraded capacity. Bypassing getCachedFeed for key: %s', key);
+            const localFeed = memoryCache.get(key);
+            if (localFeed) {
+                logger.info('[FeedCacheService] Serving from Memory Cache fallback for key: %s', key);
+                return localFeed;
+            }
+            logger.debug('[FeedCacheService] Redis offline. Cache miss in memory fallback for key: %s', key);
             return null;
         }
         try {
-            const data = await redis.get(key);
+            const data = await redisConnection.get(key);
             return data ? JSON.parse(data) : null;
         } catch (error) {
-            logger.error('[FeedCacheService] Cache miss/error for key %s: %o', key, { error: error.message, stack: error.stack });
+            logger.error('[FeedCacheService] Cache miss/error for key %s: %o', key, { error: error.message });
             return null;
         }
     }
@@ -85,13 +104,14 @@ class FeedCacheService {
      */
     async setCachedFeed(key, feedData) {
         if (!this.isHealthy()) {
-            logger.warn('[FeedCacheService] Redis offline. Skipping cache storage for key: %s', key);
+            logger.debug('[FeedCacheService] Redis offline. Storing feed in Memory Cache fallback for key: %s', key);
+            memoryCache.set(key, feedData, this.TTL_SECONDS);
             return;
         }
         try {
-            await redis.setex(key, this.TTL_SECONDS, JSON.stringify(feedData));
+            await redisConnection.setex(key, this.TTL_SECONDS, JSON.stringify(feedData));
         } catch (error) {
-            logger.error('[FeedCacheService] Failed to set cache for key %s: %o', key, { error: error.message, stack: error.stack });
+            logger.error('[FeedCacheService] Failed to set cache for key %s: %o', key, { error: error.message });
         }
     }
 
@@ -104,16 +124,30 @@ class FeedCacheService {
      * @param {string} state
      */
     async invalidateRegionCache(country, state = '*') {
-        if (!this.isHealthy()) {
-            logger.warn('[FeedCacheService] Redis offline. Bypassing invalidateRegionCache for region %s:%s', country, state);
-            return;
-        }
         const c = (country || '*').toLowerCase().replace(/\s+/g, '_');
         const s = (state || '*').toLowerCase().replace(/\s+/g, '_');
         const matchPattern = `feed:${c}:${s}:*`;
 
+        // Always invalidate in local memory cache first
+        const regexPattern = new RegExp(`^feed:${c.replace(/\*/g, '.*')}:${s.replace(/\*/g, '.*')}:.*$`);
+        let localClearedCount = 0;
+        for (const key of memoryCache.cache.keys()) {
+            if (regexPattern.test(key)) {
+                memoryCache.del(key);
+                localClearedCount++;
+            }
+        }
+        if (localClearedCount > 0) {
+            logger.info('[FeedCacheService] Invalidated %d cache keys in Memory Cache for region %s:%s', localClearedCount, country, state);
+        }
+
+        if (!this.isHealthy()) {
+            logger.warn('[FeedCacheService] Redis offline. Skipping Redis invalidateRegionCache for region %s:%s', country, state);
+            return;
+        }
+
         try {
-            const stream = redis.scanStream({
+            const stream = redisConnection.scanStream({
                 match: matchPattern,
                 count: 100
             });
@@ -122,7 +156,7 @@ class FeedCacheService {
                 if (keys.length > 0) {
                     try {
                         if (this.isHealthy()) {
-                            await redis.del(...keys);
+                            await redisConnection.del(...keys);
                             logger.info('[FeedCacheService] Invalidated %d cache keys for region %s:%s', keys.length, country, state);
                         }
                     } catch (delError) {
@@ -139,7 +173,7 @@ class FeedCacheService {
                 logger.error('[FeedCacheService] Invalidation stream error for pattern %s: %o', matchPattern, { error: err.message });
             });
         } catch (error) {
-            logger.error('[FeedCacheService] Invalidation failed for pattern %s: %o', matchPattern, { error: error.message, stack: error.stack });
+            logger.error('[FeedCacheService] Invalidation failed for pattern %s: %o', matchPattern, { error: error.message });
         }
     }
 
@@ -154,11 +188,15 @@ class FeedCacheService {
      */
     async getDiversityMatrixOverride(userId) {
         if (!this.isHealthy()) {
-            logger.warn('[FeedCacheService] Redis offline. Operating in degraded capacity. Bypassing diversity matrix override for user: %s', userId);
+            const localMatrix = memoryCache.get(`user:diversity:${userId}`);
+            if (localMatrix) {
+                logger.info('[FeedCacheService] Serving diversity override from Memory Cache for user: %s', userId);
+                return localMatrix;
+            }
             return null;
         }
         try {
-            const override = await redis.get(`user:diversity:${userId}`);
+            const override = await redisConnection.get(`user:diversity:${userId}`);
             return override ? JSON.parse(override) : null;
         } catch (error) {
             logger.error('[FeedCacheService] Diversity matrix get error for user %s: %o', userId, { error: error.message });
@@ -176,16 +214,36 @@ class FeedCacheService {
      */
     async trackUserInteraction(userId, eventType, trendScope) {
         if (!this.isHealthy()) {
-            logger.warn('[FeedCacheService] Redis offline. Skipping trackUserInteraction for user: %s', userId);
+            const counterKey = `user:skips:global:${userId}`;
+            if (eventType === 'skip' && trendScope === 'global') {
+                const currentRecord = memoryCache.get(counterKey) || { skips: 0 };
+                const currentSkips = currentRecord.skips + 1;
+                memoryCache.set(counterKey, { skips: currentSkips }, 3600); // 1 hour TTL
+
+                if (currentSkips >= this.SKIP_THRESHOLD) {
+                    const overridePayload = {
+                        localRatio: 0.85,
+                        nationalRatio: 0.10,
+                        globalRatio: 0.05,
+                        triggeredAt: new Date().toISOString()
+                    };
+                    const diversityKey = `user:diversity:${userId}`;
+                    memoryCache.set(diversityKey, overridePayload, this.DIVERSITY_TTL_SECONDS);
+                    logger.info('[FeedCacheService] (Memory) Adaptive diversity triggered for %s. Shifted to 85/10/5 matrix.', userId);
+                    memoryCache.del(counterKey);
+                }
+            } else if (['click', 'like', 'share', 'bookmark'].includes(eventType)) {
+                memoryCache.del(counterKey);
+            }
             return;
         }
         try {
             const counterKey = `user:skips:global:${userId}`;
             
             if (eventType === 'skip' && trendScope === 'global') {
-                const currentSkips = await redis.incr(counterKey);
+                const currentSkips = await redisConnection.incr(counterKey);
                 // Set an expiration on the counter so it resets if inactive for an hour
-                if (currentSkips === 1) await redis.expire(counterKey, 3600);
+                if (currentSkips === 1) await redisConnection.expire(counterKey, 3600);
 
                 if (currentSkips >= this.SKIP_THRESHOLD) {
                     // Trigger Adaptive Diversity Override: Shift to highly localized 85/10/5 matrix
@@ -197,19 +255,19 @@ class FeedCacheService {
                     };
 
                     const diversityKey = `user:diversity:${userId}`;
-                    await redis.setex(diversityKey, this.DIVERSITY_TTL_SECONDS, JSON.stringify(overridePayload));
+                    await redisConnection.setex(diversityKey, this.DIVERSITY_TTL_SECONDS, JSON.stringify(overridePayload));
                     
                     logger.info('[FeedCacheService] Adaptive diversity triggered for %s. Shifted to 85/10/5 matrix.', userId);
                     
                     // Reset counter after triggering
-                    await redis.del(counterKey);
+                    await redisConnection.del(counterKey);
                 }
             } else if (['click', 'like', 'share', 'bookmark'].includes(eventType)) {
                 // Any positive engagement resets the skip penalty counter
-                await redis.del(counterKey);
+                await redisConnection.del(counterKey);
             }
         } catch (error) {
-            logger.error('[FeedCacheService] Error tracking interaction for user %s: %o', userId, { error: error.message, stack: error.stack });
+            logger.error('[FeedCacheService] Error tracking interaction for user %s: %o', userId, { error: error.message });
         }
     }
 }

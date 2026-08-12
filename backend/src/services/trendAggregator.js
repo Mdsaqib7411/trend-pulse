@@ -10,6 +10,8 @@ const platformFusionEngine = require('./platformFusionEngine');
 const trendClusteringEngine = require('./trendClusteringEngine');
 const graphEngine = require('./graphEngine');
 const trendPredictionEngine = require('./trendPredictionEngine');
+const trendScoreEngine = require('./trendScoreEngine');
+const logger = require('./loggerService');
 
 const CACHE_DURATION_SEC = 300; // 5 minutes
 
@@ -86,8 +88,15 @@ class TrendAggregator {
             return { data: [], isStale: true, fetchedAt: new Date().toISOString() };
         }
 
-        // 3. Deduplicate based on title similarity
-        combined = this.removeDuplicates(combined);
+        // Initialize unique trendIds and category mappings early
+        combined = combined.map(t => {
+            const tId = t.url || `trend_${Math.random().toString(36).substr(2, 9)}`;
+            return {
+                ...t,
+                trendId: tId,
+                category: t.category || category
+            };
+        });
 
         // 3.5. Anti-spam moderation pass
         combined = trendModerationService.moderateBatch(combined);
@@ -103,8 +112,8 @@ class TrendAggregator {
             console.log(`[TrendAggregator] Clustering: ${clusterResult.anomalyCount} trends quarantined, ${clusterResult.clusterCount} clusters formed.`);
         }
 
-        // 4. Apply Ranking & Sort
-        combined = this.applyRanking(combined);
+        // 4. Apply Authoritative Scoring via TrendScoreEngine & Filter/Sort
+        combined = await trendScoreEngine.scoreBatch(combined);
 
         // 5. Filter out very old trends (older than 7 days) to keep feed fresh, then Sort & Limit
         combined = combined.filter(t => {
@@ -113,7 +122,41 @@ class TrendAggregator {
         });
 
         combined.sort((a, b) => b.trendScore - a.trendScore);
-        const finalTrends = combined.slice(0, 15);
+        let finalTrends = combined.slice(0, 15);
+
+        // Fallback if final trends is empty after age/moderation filtering
+        if (finalTrends.length === 0) {
+            logger.info('[TrendAggregator] Final filtered trends empty for %s. Initiating DB Fallback.', category);
+            try {
+                const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const pattern = new RegExp(escaped, 'i');
+                const query = (category === 'Home' || category === 'All') ? {} : {
+                    $or: [
+                        { category: pattern },
+                        { title: pattern }
+                    ]
+                };
+                const fallbackTrends = await Trend.find(query)
+                    .sort({ trendScore: -1, publishedAt: -1 })
+                    .limit(15)
+                    .maxTimeMS(4000)
+                    .lean();
+
+                if (fallbackTrends && fallbackTrends.length > 0) {
+                    logger.info('[TrendAggregator] DB Fallback successful from empty filters, returned %d trends.', fallbackTrends.length);
+                    return {
+                        data: fallbackTrends,
+                        isStale: true,
+                        fetchedAt: fallbackTrends[0].publishedAt || new Date().toISOString()
+                    };
+                }
+            } catch (err) {
+                logger.error('[TrendAggregator] DB Fallback error on empty filters: %s', err.message);
+            }
+        }
+
+        // 5.5 Hydrate perfect backward-compatible model fields for UI
+        finalTrends = this.hydrateModelFields(finalTrends);
 
         // 6. Upsert to Database so AI Analysis and other features work
         try {
@@ -160,11 +203,15 @@ class TrendAggregator {
                 }
             }
         } catch (dbErr) {
-            console.error('Error saving aggregated trends to DB:', dbErr.message);
+            console.error('Error saving aggregated trends to DB:', dbErr);
         }
 
-        // 7. Update Redis Cache
-        await cacheService.setex(cacheKey, CACHE_DURATION_SEC, finalTrends);
+        // 7. Update Redis Cache (only if we have trends, to avoid caching empty states)
+        if (finalTrends.length > 0) {
+            await cacheService.setex(cacheKey, CACHE_DURATION_SEC, finalTrends);
+        } else {
+            console.log(`[TrendAggregator] Skipping cache update for empty trends in: ${category}`);
+        }
 
         // 7.5. Build trend relationship graph (fire-and-forget)
         graphEngine.buildRelationships(finalTrends).catch(err =>
@@ -263,7 +310,10 @@ class TrendAggregator {
             else if (category === 'Education') subreddits = ['IndianAcademia', 'education'];
 
             const promises = subreddits.map(sub =>
-                axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=5`, { timeout: 4000 })
+                axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=5`, { 
+                    timeout: 4000,
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+                })
             );
 
             const responses = await Promise.all(promises);
@@ -404,44 +454,28 @@ class TrendAggregator {
     }
 
     /**
-     * Ranking Algorithm
+     * Hydrate perfect backward-compatible model fields for UI.
      */
-    applyRanking(trends) {
+    hydrateModelFields(trends) {
         const now = new Date();
-
-        return trends.map(trend => {
-            // 1. Recency Score (Decays over time)
-            const hoursOld = Math.max(0, (now - trend.publishedAt) / (1000 * 60 * 60));
-            // e.g., max 100 points, losing 2 points per hour old
-            let recencyScore = Math.max(0, 100 - (hoursOld * 2));
-
-            // 2. Normalize Engagement Score 
-            // Reddit scores can be thousands. We'll cap the boost or log it.
-            let engagementBoost = trend.type === 'reddit'
-                ? Math.log10(trend.engagementScore + 1) * 10
-                : trend.engagementScore * 10;
-
-            // Total Score
-            const trendScore = Math.round(recencyScore + engagementBoost);
-
-            // Determine Label
+        return trends.map(t => {
+            const hoursOld = Math.max(0, (now - new Date(t.publishedAt)) / (1000 * 60 * 60));
+            const score = t.trendScore || 0;
             let label = "🆕 New";
-            if (trendScore >= 100) label = "🔥 Hot";
-            else if (trendScore >= 60) label = "📈 Trending";
+            if (score >= 75) label = "🔥 Hot";
+            else if (score >= 45) label = "📈 Trending";
 
             return {
-                ...trend,
-                trendScore,
+                ...t,
                 label,
-                // Adding fields to match frontend data model so UI doesn't break
-                id: trend.url,
-                trendId: trend.url,
-                category: trend.source,
+                id: t.url || t.trendId,
+                trendId: t.url || t.trendId,
+                category: t.category || t.source || 'General',
                 time: hoursOld < 1 ? 'Just now' : hoursOld < 24 ? `${Math.floor(hoursOld)} hours ago` : `${Math.floor(hoursOld / 24)} days ago`,
                 readTime: '5 min read',
-                author: trend.source,
+                author: t.author || t.source || 'Unknown',
                 growth: label === "🔥 Hot" ? "+200%" : "+50%",
-                content: trend.description || trend.title // Ensure content exists
+                content: t.description || t.content || t.title
             };
         });
     }

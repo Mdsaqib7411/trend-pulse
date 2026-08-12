@@ -76,15 +76,23 @@ const { createBullBoard } = require('@bull-board/api');
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
 const { ExpressAdapter } = require('@bull-board/express');
 const { aiEnrichmentQueue, trendQueue } = require('./config/queue');
+const { isRedisAvailable } = require('./config/redis');
 
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath('/admin/queues');
 
+const queuesToBoard = [];
+if (isRedisAvailable() && aiEnrichmentQueue.bullQueue && trendQueue.bullQueue) {
+    try {
+        queuesToBoard.push(new BullMQAdapter(aiEnrichmentQueue.bullQueue));
+        queuesToBoard.push(new BullMQAdapter(trendQueue.bullQueue));
+    } catch (err) {
+        console.error('[BullBoard] Failed to attach BullMQ adapters:', err.message);
+    }
+}
+
 createBullBoard({
-    queues: [
-        new BullMQAdapter(aiEnrichmentQueue),
-        new BullMQAdapter(trendQueue)
-    ],
+    queues: queuesToBoard,
     serverAdapter
 });
 

@@ -125,7 +125,9 @@ const trendSchema = new mongoose.Schema({
         alertType: { type: String },
         confidenceScore: { type: Number, default: 0 },
         keywords: [String],
-        processedAt: { type: Date }
+        processedAt: { type: Date },
+        provider: { type: String },
+        gateway: { type: String }
     },
 
     // Task 7: Isolated AI Confidence sub-object

@@ -10,6 +10,7 @@
  */
 
 const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { analysisSchema } = require('../validators/analysisSchema');
 const logger = require('./loggerService');
 
@@ -21,45 +22,109 @@ if (process.env.OPENROUTER_API_KEY) {
     });
 }
 
+let geminiDirectModel;
+if (process.env.GEMINI_API_KEY) {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    geminiDirectModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+}
+
 class AIAnalyticsService {
 
     /**
      * Enhanced enrichment with scoring context injection, geo context, and Zod validation.
      */
     async enrichTrendWithContext(trend, scoring, velocityDelta, geoContext = '') {
-        if (!openai) {
-            logger.warn('[Shahkal] Missing OPENROUTER_API_KEY. Returning fallback.');
-            return this.getFallbackEnrichment(trend, scoring, velocityDelta);
-        }
-
+        const aiTelemetryService = require('./aiTelemetryService');
         const prompt = this.buildPrompt(trend, scoring, velocityDelta, geoContext);
 
-        // Attempt 1: DeepSeek
-        try {
-            const result = await this.callAndValidate(prompt, 'deepseek/deepseek-chat');
-            return result;
-        } catch (err) {
-            logger.warn('[Shahkal] DeepSeek failed (%s). Attempting GPT fallback...', err.message);
+        // Layer 1: Gemini Direct SDK (Primary - High Performance)
+        if (geminiDirectModel) {
+            try {
+                const startTime = Date.now();
+                const result = await this.callDirectGeminiAndValidate(prompt);
+                const latency = Date.now() - startTime;
+                aiTelemetryService.recordSuccess('Gemini Direct', latency);
+                return {
+                    ...result,
+                    provider: 'Gemini Direct',
+                    gateway: 'Google SDK'
+                };
+            } catch (err) {
+                aiTelemetryService.recordFailure('Gemini Direct', err.message);
+                logger.warn(`[Shahkal Failover] Gemini Direct failed (${err.message}). Transitioning to Layer 2 (Gemini OpenRouter).`);
+            }
         }
 
-        // Attempt 2: GPT-4o-mini fallback
+        // Layer 2: Gemini OpenRouter
         try {
-            const result = await this.callAndValidate(prompt, 'openai/gpt-4o-mini');
-            logger.info('[Shahkal] GPT fallback succeeded.');
-            return result;
+            const startTime = Date.now();
+            const result = await this.callAndValidate(prompt, 'google/gemini-2.5-flash:free');
+            const latency = Date.now() - startTime;
+            aiTelemetryService.recordSuccess('Gemini OpenRouter', latency);
+            return {
+                ...result,
+                provider: 'Gemini OpenRouter',
+                gateway: 'OpenRouter'
+            };
         } catch (err) {
-            logger.error('[Shahkal] Both LLMs failed validation: %s', err.message);
+            aiTelemetryService.recordFailure('Gemini OpenRouter', err.message);
+            logger.warn(`[Shahkal Failover] Gemini OpenRouter failed (${err.message}). Transitioning to Layer 3 (Qwen 2.5).`);
         }
 
-        // Attempt 3: Deterministic local fallback (zero LLM cost)
-        return this.getFallbackEnrichment(trend, scoring, velocityDelta);
+        // Layer 3: Qwen 2.5 OpenRouter
+        try {
+            aiTelemetryService.recordFallbackActivation('Qwen 2.5 OpenRouter');
+            const startTime = Date.now();
+            const result = await this.callAndValidate(prompt, 'qwen/qwen-2.5-7b-instruct:free');
+            const latency = Date.now() - startTime;
+            aiTelemetryService.recordSuccess('Qwen 2.5 OpenRouter', latency);
+            return {
+                ...result,
+                provider: 'Qwen 2.5 OpenRouter',
+                gateway: 'OpenRouter'
+            };
+        } catch (err) {
+            aiTelemetryService.recordFailure('Qwen 2.5 OpenRouter', err.message);
+            logger.warn(`[Shahkal Failover] Qwen 2.5 OpenRouter failed (${err.message}). Transitioning to Layer 4 (Llama 3).`);
+        }
+
+        // Layer 4: Llama 3 OpenRouter
+        try {
+            aiTelemetryService.recordFallbackActivation('Llama 3 OpenRouter');
+            const startTime = Date.now();
+            const result = await this.callAndValidate(prompt, 'meta-llama/llama-3-8b-instruct:free');
+            const latency = Date.now() - startTime;
+            aiTelemetryService.recordSuccess('Llama 3 OpenRouter', latency);
+            return {
+                ...result,
+                provider: 'Llama 3 OpenRouter',
+                gateway: 'OpenRouter'
+            };
+        } catch (err) {
+            aiTelemetryService.recordFailure('Llama 3 OpenRouter', err.message);
+            logger.error(`[Shahkal Failover] All AI layers failed: ${err.message}.`);
+        }
+
+        // Layer 5: Local deterministic fallback
+        aiTelemetryService.recordLocalFallback();
+        const fallback = this.getFallbackEnrichment(trend, scoring, velocityDelta);
+        return {
+            ...fallback,
+            provider: 'Local Fallback',
+            gateway: 'In-Memory'
+        };
     }
+
 
     /**
      * Calls the LLM model and validates the response against analysisSchema.
      * Throws on JSON parse failure or Zod validation failure.
      */
     async callAndValidate(prompt, model) {
+        if (!openai) {
+            throw new Error('OpenRouter client not initialized (missing API key)');
+        }
+
         const completion = await openai.chat.completions.create({
             messages: [{ role: 'system', content: prompt }],
             model,
@@ -89,6 +154,40 @@ class AIAnalyticsService {
             logger.warn('[Shahkal] Zod validation failed: %s', issues);
 
             // Attempt to salvage: coerce partial fields into valid fallback
+            return this.coercePartialResult(parsed);
+        }
+
+        return validation.data;
+    }
+
+    /**
+     * Calls the Gemini Direct SDK client and validates the response against analysisSchema.
+     * Throws on SDK failure, JSON parse failure, or Zod validation failure.
+     */
+    async callDirectGeminiAndValidate(prompt) {
+        if (!geminiDirectModel) {
+            throw new Error('Gemini Direct SDK client not initialized (missing API key)');
+        }
+
+        const result = await geminiDirectModel.generateContent(prompt);
+        const rawContent = result.response.text();
+        if (!rawContent) {
+            throw new Error('Empty response from Gemini Direct SDK');
+        }
+
+        let parsed;
+        try {
+            const clean = rawContent.replace(/```json\n?|```/g, '').trim();
+            parsed = JSON.parse(clean);
+        } catch (jsonErr) {
+            logger.error('[Shahkal] Gemini Direct JSON parse failed. Raw: %s', rawContent.substring(0, 200));
+            throw new Error(`JSON parse failure: ${jsonErr.message}`);
+        }
+
+        const validation = analysisSchema.safeParse(parsed);
+        if (!validation.success) {
+            const issues = validation.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+            logger.warn('[Shahkal] Gemini Direct Zod validation failed: %s', issues);
             return this.coercePartialResult(parsed);
         }
 

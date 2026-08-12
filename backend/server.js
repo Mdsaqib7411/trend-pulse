@@ -1,13 +1,28 @@
 require('dotenv').config(); // Must be FIRST — loads .env before anything else reads process.env
+const logger = require('./src/services/loggerService');
+
+// --- Strict Production Environment Variable Validation ---
+const requiredEnvVars = ['MONGO_URI'];
+const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
+
+if (missingVars.length > 0) {
+    logger.error('[Server] CRITICAL STARTUP FAILURE: Missing required environment variables: %o', missingVars);
+    process.exit(1);
+}
+
+if (process.env.PORT && isNaN(Number(process.env.PORT))) {
+    logger.error('[Server] CRITICAL STARTUP FAILURE: PORT env variable must be a valid number. Value received: %s', process.env.PORT);
+    process.exit(1);
+}
+
 const http = require('http');
 const app = require('./src/app');
 const mongoose = require('mongoose');
 const socketService = require('./src/services/socketService');
-const redisConnection = require('./src/config/redis');
+const { redisConnection, isRedisAvailable } = require('./src/config/redis');
 const cron = require('node-cron');
 const { ensureIndexes } = require('./src/config/dbIndexes');
 const geoTrendEngine = require('./src/services/geoTrendEngine');
-const logger = require('./src/services/loggerService');
 
 const PORT = process.env.PORT || 5000;
 
@@ -36,6 +51,7 @@ mongoose.connect(process.env.MONGO_URI)
         require('./src/queues/workers/aiEnrichmentWorker');
         require('./src/queues/workers/trendWorker');
         require('./src/jobs/trendAggregatorJob');
+        require('./src/jobs/intelligenceScheduler');
 
         // Layer 3: Hourly geo trend emerging scan
         cron.schedule('0 * * * *', async () => {
@@ -48,6 +64,25 @@ mongoose.connect(process.env.MONGO_URI)
             }
         });
         logger.info('[Cron] Geo trend scan scheduled (hourly).');
+
+        // Run startup diagnostics after 1.5 seconds to let connections settle
+        setTimeout(() => {
+            const mongoConnected = mongoose.connection.readyState === 1;
+            const redisConnected = isRedisAvailable();
+            const geminiConfigured = !!process.env.GEMINI_API_KEY;
+            const newsConfigured = !!process.env.NEWS_API_KEY;
+            const youtubeConfigured = !!process.env.YOUTUBE_API_KEY;
+
+            console.log('\n======================================================');
+            console.log('         TRENDPULSE - STARTUP DIAGNOSTICS REPORT      ');
+            console.log('======================================================');
+            console.log(`  MongoDB:    ${mongoConnected ? '✅ Connected' : '❌ Disconnected'}`);
+            console.log(`  Redis:      ${redisConnected ? '✅ Connected (High-Performance Active)' : '⚠️ Offline (Memory Fallback Active)'}`);
+            console.log(`  Gemini:     ${geminiConfigured ? '✅ Configured (Chat/Analysis Active)' : '❌ Missing API Key'}`);
+            console.log(`  NewsAPI:    ${newsConfigured ? '✅ Configured (News Fetch Active)' : '❌ Missing API Key'}`);
+            console.log(`  YouTube:    ${youtubeConfigured ? '✅ Configured (Video Fetch Active)' : '❌ Missing API Key'}`);
+            console.log('======================================================\n');
+        }, 1500);
     });
 })
 .catch((err) => {

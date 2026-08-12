@@ -119,8 +119,32 @@ class AnalyticsService {
         if (growthRate > 20) viralityTrend = 'Bullish';
         else if (growthRate < -20) viralityTrend = 'Bearish';
 
+        // 1. Fetch main trend doc to align regional distributions to actual geographical context
+        const Trend = require('../models/Trend');
+        const trend = await Trend.findOne({ trendId }).maxTimeMS(2000).lean();
+        
+        // Derive contextual target country
+        let primaryCountry = 'US';
+        if (trend) {
+            const loc = (trend.location || '').toUpperCase();
+            if (loc === 'INDIA' || loc === 'IN') primaryCountry = 'IN';
+            else if (loc === 'UNITED STATES' || loc === 'US') primaryCountry = 'US';
+            else if (loc === 'UNITED KINGDOM' || loc === 'UK') primaryCountry = 'UK';
+            else if (loc === 'GERMANY' || loc === 'DE') primaryCountry = 'DE';
+            else if (loc === 'AUSTRALIA' || loc === 'AU') primaryCountry = 'AU';
+            else if (loc === 'FRANCE' || loc === 'FR') primaryCountry = 'FR';
+            else if (loc === 'JAPAN' || loc === 'JP') primaryCountry = 'JP';
+            else if (loc === 'BRAZIL' || loc === 'BR') primaryCountry = 'BR';
+            else if (loc === 'CANADA' || loc === 'CA') primaryCountry = 'CA';
+            else if (trend.geography?.country) {
+                const geoLoc = trend.geography.country.toUpperCase();
+                if (geoLoc === 'INDIA') primaryCountry = 'IN';
+                else if (geoLoc === 'UNITED STATES') primaryCountry = 'US';
+            }
+        }
+
         // Generate consistent regional distribution based on trendId hash
-        const regionsPool = ['US', 'IN', 'UK', 'CA', 'AU', 'DE', 'FR', 'JP', 'BR'];
+        const regionsPool = ['US', 'IN', 'UK', 'CA', 'AU', 'DE', 'FR', 'JP', 'BR'].filter(r => r !== primaryCountry);
         let hash = 0;
         for (let i = 0; i < trendId.length; i++) {
             hash = trendId.charCodeAt(i) + ((hash << 5) - hash);
@@ -128,10 +152,25 @@ class AnalyticsService {
         hash = Math.abs(hash);
 
         const regionalDistribution = [];
-        let remainingPercentage = 100;
-        for (let i = 0; i < 3; i++) {
+        // Add the primary target country as the dominant region
+        regionalDistribution.push({
+            region: primaryCountry,
+            percentage: 70 + (hash % 15) // Clamped between 70% and 84%
+        });
+
+        // Add 2 other regions from the pool
+        let remainingPercentage = 100 - regionalDistribution[0].percentage;
+        for (let i = 0; i < 2; i++) {
             const regionIndex = (hash + i * 7) % regionsPool.length;
-            let percentage = (i === 2) ? remainingPercentage : Math.floor((hash + i * 13) % (remainingPercentage - 20)) + 15;
+            const region = regionsPool[regionIndex];
+            
+            // Deduplicate region in case of collision
+            if (regionalDistribution.some(r => r.region === region)) {
+                const fallbackIndex = (regionIndex + 1) % regionsPool.length;
+                regionsPool[regionIndex] = regionsPool[fallbackIndex];
+            }
+
+            let percentage = (i === 1) ? remainingPercentage : Math.floor((hash + i * 13) % (remainingPercentage - 5)) + 3;
             remainingPercentage -= percentage;
             
             regionalDistribution.push({

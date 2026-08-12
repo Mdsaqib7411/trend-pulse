@@ -10,8 +10,8 @@
  *   - Compute AI Confidence sub-object (Task 7).
  */
 
-const { Worker } = require('bullmq');
-const redisConnection = require('../../config/redis');
+const { Worker } = require('../../config/queue');
+const { redisConnection } = require('../../config/redis');
 const Trend = require('../../models/Trend');
 const aiAnalyticsService = require('../../services/aiAnalyticsService');
 const geoTrendEngine = require('../../services/geoTrendEngine');
@@ -31,8 +31,8 @@ const aiWorker = new Worker('ai-enrichment', async (job) => {
         throw new Error(`Trend ${trendId} not found in DB`);
     }
 
-    // Skip if already processed successfully
-    if (trend.analysis && trend.analysis.status === 'completed') {
+    // Skip if already processed successfully and not provisional
+    if (trend.analysis && trend.analysis.status === 'completed' && !trend.analysis.isProvisional) {
         return { status: 'skipped', reason: 'already processed' };
     }
 
@@ -86,6 +86,7 @@ const aiWorker = new Worker('ai-enrichment', async (job) => {
         trend.analysis = {
             ...enrichedData,
             status: 'completed',
+            isProvisional: false, // Explicitly clear provisional flag on real completion
             processedAt: new Date()
         };
         trend.aiConfidence = aiConfidence;

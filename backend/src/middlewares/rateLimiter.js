@@ -15,14 +15,22 @@ const ApiResponse = require('../utils/apiResponse');
 const rateLimitRedis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
     maxRetriesPerRequest: null,
     retryStrategy(times) {
-        const delay = Math.min(times * 100, 3000);
-        logger.warn('[RateLimiter Redis] Connection lost. Attempt %d. Reconnecting in %dms...', times, delay);
+        const delay = Math.min(times * 1000, 10000);
+        if (times <= 3) {
+            logger.warn('[RateLimiter Redis] Connection lost. Attempt %d. Reconnecting in %dms...', times, delay);
+        } else if (times % 30 === 0) {
+            logger.warn('[RateLimiter Redis] Still offline after %d attempts. Operating in in-memory fallback mode.', times);
+        }
         return delay;
     }
 });
 
 rateLimitRedis.on('error', (err) => {
-    logger.error('[RateLimiter] Redis connection error: %o', { error: err.message, stack: err.stack });
+    if (rateLimitRedis.status !== 'ready') {
+        logger.debug('[RateLimiter] Redis offline state error: %s', err.message);
+    } else {
+        logger.error('[RateLimiter] Redis connection error: %s', err.message);
+    }
 });
 
 rateLimitRedis.on('ready', () => {

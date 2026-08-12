@@ -45,5 +45,10 @@ AITrendTracker7/ios/.xcode.env.local
 AITrendTracker7/*.jsbundle
 AITrendTracker7/vendor/bundle/
 AITrendTracker7/.watchmanconfig
-AITrendTracker7/.metro-health-check*
+AITrendTracker7/AITrendTracker7/.metro-health-check*
 AITrendTracker7/coverage/
+
+# Temporary / dump files
+*.txt
+*.bak
+

@@ -21,6 +21,27 @@ exports.syncUser = async (req, res, next) => {
     }
 };
 
+exports.syncContinuity = async (req, res, next) => {
+    try {
+        const uid = req.user.uid;
+        const { savedTrends, recentSearches, preferences, interests, pendingActivities } = req.body;
+
+        if (!uid) return ApiResponse.error(res, 'User UID is required', null, 400);
+
+        const syncResult = await userService.syncContinuity(uid, {
+            savedTrends,
+            recentSearches,
+            preferences,
+            interests,
+            pendingActivities
+        });
+
+        return ApiResponse.success(res, 'Intelligence state synchronized successfully', syncResult);
+    } catch (error) {
+        next(error);
+    }
+};
+
 exports.getProfile = async (req, res, next) => {
     try {
         const uid = req.user.uid;
@@ -102,6 +123,26 @@ exports.deleteProfile = async (req, res, next) => {
         const result = await userService.deleteProfile(uid);
         if (!result) return ApiResponse.error(res, 'User not found', null, 404);
         return ApiResponse.success(res, 'User profile deleted successfully');
+    } catch (error) {
+        next(error);
+    }
+};
+
+exports.updateFcmToken = async (req, res, next) => {
+    try {
+        const uid = req.user.uid;
+        const { fcmToken, platform } = req.body;
+        
+        if (!fcmToken) return ApiResponse.error(res, 'FCM token is required', null, 400);
+        
+        const updatedUser = await userService.updateFcmToken(uid, fcmToken, platform);
+        if (!updatedUser) return ApiResponse.error(res, 'User not found', null, 404);
+
+        return ApiResponse.success(res, 'FCM token updated successfully', {
+            uid: updatedUser.uid,
+            fcmToken: updatedUser.fcmToken,
+            platform: updatedUser.session?.platform
+        });
     } catch (error) {
         next(error);
     }

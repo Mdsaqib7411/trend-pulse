@@ -15,7 +15,11 @@ const aiChatSchema = z.object({
         history: z.array(
             z.object({
                 role: z.enum(['user', 'model', 'assistant']),
-                text: z.string().max(1000, 'history text cannot exceed 1000 characters')
+                parts: z.array(
+                    z.object({
+                        text: z.string().max(1000, 'history text cannot exceed 1000 characters')
+                    })
+                ).min(1, 'parts must contain at least 1 item')
             })
         )
         .max(10, 'history cannot exceed 10 messages')

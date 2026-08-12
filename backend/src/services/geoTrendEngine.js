@@ -20,7 +20,18 @@ const socketService = require('./socketService');
 const logger = require('./loggerService');
 const Redis = require('ioredis');
 
-const redisClient = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+const redisClient = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+        // Backoff dynamically to prevent spamming
+        const delay = Math.min(times * 1000, 10000);
+        return delay;
+    }
+});
+
+redisClient.on('error', (err) => {
+    logger.debug('[GeoTrendEngine] Redis offline state error: %s', err.message);
+});
 
 const VELOCITY_SPIKE_THRESHOLD_MAJOR = 300; // 300% increase
 const VELOCITY_SPIKE_THRESHOLD_MILD = 100; // 100% increase

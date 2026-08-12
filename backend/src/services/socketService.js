@@ -27,10 +27,15 @@ function init(httpServer) {
         pingTimeout: 60000
     });
 
-    // Attach Redis adapter for multi-instance broadcast consistency
+    // Attach Redis adapter for multi-instance broadcast consistency if Redis is online
     try {
-        io.adapter(createSocketAdapter());
-        logger.info('[WS] Redis adapter attached for horizontal scaling.');
+        const adapter = createSocketAdapter();
+        if (adapter) {
+            io.adapter(adapter);
+            logger.info('[WS] Redis adapter attached for horizontal scaling.');
+        } else {
+            logger.warn('[WS] Redis offline. Operating in single-instance mode (In-Memory WebSocket adapter active).');
+        }
     } catch (err) {
         logger.warn('[WS] Redis adapter failed, running single-instance: %s', err.message);
     }

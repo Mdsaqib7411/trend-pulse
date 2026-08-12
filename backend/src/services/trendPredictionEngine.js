@@ -11,6 +11,7 @@
  */
 
 const Trend = require('../models/Trend');
+const PredictionHistory = require('../models/PredictionHistory');
 const cacheService = require('./cacheService');
 const logger = require('./loggerService');
 
@@ -26,8 +27,28 @@ const LIFECYCLE_THRESHOLDS = {
     DEAD_HOURS_STALE:          72
 };
 
+// ─── Category Volatility Configuration (Phase 4C.1 Calibration) ──────────────
+const CATEGORY_VOLATILITY = {
+    'Finance':       { velocityScale: 1.4, deadHoursStale: 24, deadMaxComposite: 12 },
+    'Entertainment': { velocityScale: 1.25, deadHoursStale: 36, deadMaxComposite: 10 },
+    'AI':            { velocityScale: 1.00, deadHoursStale: 72, deadMaxComposite: 8 },
+    'Technology':    { velocityScale: 1.00, deadHoursStale: 72, deadMaxComposite: 8 },
+    'Cricket':       { velocityScale: 0.95, deadHoursStale: 48, deadMaxComposite: 8 },
+    '_default':      { velocityScale: 1.00, deadHoursStale: 72, deadMaxComposite: 8 }
+};
+
 // ─── Historical Scan Configuration ──────────────────────────────────────────
 const HISTORICAL_WINDOW_MONTHS = 6;
+
+// ─── Platt Calibration Parameters (Phase 4E) ─────────────────────────────────
+const PLATT_PARAMETERS = {
+    'AI':            { A: -1.561541, B: -0.355547 },
+    'Technology':    { A: -0.653763, B: -0.713869 },
+    'Cricket':       { A: -0.486930, B: -1.046627 },
+    'Finance':       { A: 0.838112,  B: 0.058492  },
+    'Entertainment': { A: 0.279437,  B: -0.326752 },
+    '_default':      { A: -0.653763, B: -0.713869 }
+};
 const HISTORICAL_KEYWORD_THRESHOLD = 0.45; // 45% overlap = semantically similar
 const MAX_HISTORICAL_MATCHES = 10;
 
@@ -67,52 +88,26 @@ const MIGRATION_MATRIX = {
     ]
 };
 
-// ─── Stop Words (shared across Phase 3.5 modules) ──────────────────────────
-const STOP_WORDS = new Set([
-    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-    'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
-    'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
-    'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above',
-    'below', 'between', 'out', 'off', 'over', 'under', 'again', 'further',
-    'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all',
-    'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such',
-    'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-    'just', 'and', 'but', 'or', 'if', 'while', 'as', 'that', 'this', 'it',
-    'its', 'what', 'which', 'who', 'whom', 'these', 'those', 'am', 'he',
-    'she', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'his',
-    'your', 'our', 'their', 'new', 'says', 'said', 'also'
-]);
-
+const { extractKeywords, computeOverlap } = require('../utils/keywordUtils');
 
 class TrendPredictionEngine {
 
-    // ─── 1. KEYWORD EXTRACTION ──────────────────────────────────────────────
+    // ─── Platt Calibration (Phase 4E) ────────────────────────────────────────
 
-    /**
-     * Extract significant keyword tokens from text.
-     */
-    extractKeywords(text) {
-        if (!text) return [];
-        return text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s]/g, '')
-            .split(/\s+/)
-            .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+    calibrateConfidence(rawConfidence, category) {
+        const p = PLATT_PARAMETERS[category] || PLATT_PARAMETERS['_default'];
+        const calibrated = 1 / (1 + Math.exp(p.A * rawConfidence + p.B));
+        return parseFloat(calibrated.toFixed(3));
     }
 
-    /**
-     * Compute keyword overlap ratio (min-denominator Jaccard).
-     */
+    // ─── 1. KEYWORD EXTRACTION ──────────────────────────────────────────────
+
+    extractKeywords(text) {
+        return extractKeywords(text);
+    }
+
     computeOverlap(kwA, kwB) {
-        if (kwA.length === 0 || kwB.length === 0) return 0;
-        const setA = new Set(kwA);
-        const setB = new Set(kwB);
-        let intersection = 0;
-        for (const w of setA) {
-            if (setB.has(w)) intersection++;
-        }
-        return intersection / Math.min(setA.size, setB.size);
+        return computeOverlap(kwA, kwB);
     }
 
 
@@ -131,53 +126,112 @@ class TrendPredictionEngine {
      * @param {Object} trend — Trend document with scoreHistory, scoring, publishedAt
      * @returns {string} — One of: 'emerging', 'accelerating', 'viral', 'declining', 'dead'
      */
-    computeLifecycleState(trend) {
+    computeLifecycleState(trend, useCalibrated = false) {
         const composite = trend.scoring?.compositeScore || trend.trendScore || 0;
         const history = trend.scoreHistory || [];
         const hoursOld = this.getHoursOld(trend);
 
-        // Dead: very low score and stale
-        if (composite < LIFECYCLE_THRESHOLDS.DEAD_MAX_COMPOSITE && hoursOld > LIFECYCLE_THRESHOLDS.DEAD_HOURS_STALE) {
-            return 'dead';
-        }
+        if (useCalibrated) {
+            const category = trend.category || '_default';
+            const catConfig = CATEGORY_VOLATILITY[category] || CATEGORY_VOLATILITY['_default'];
 
-        // Compute velocity: average delta over last 3 snapshots
-        const velocity = this.computeVelocity(history);
+            // Compute EWMA velocity (averages deltas exponentially)
+            const velocity = this.computeVelocity(history, 3, true);
 
-        // Viral: high composite AND strong positive velocity
-        if (composite >= LIFECYCLE_THRESHOLDS.VIRAL_COMPOSITE && velocity >= LIFECYCLE_THRESHOLDS.VIRAL_VELOCITY) {
-            return 'viral';
-        }
+            // 1. Dynamic Dead-window Logic by Category (only if velocity is non-positive)
+            if (composite < catConfig.deadMaxComposite && hoursOld > catConfig.deadHoursStale && velocity <= 0) {
+                return 'dead';
+            }
 
-        // Accelerating: moderate-to-high composite with strong upward momentum
-        if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= LIFECYCLE_THRESHOLDS.ACCELERATING_VELOCITY) {
-            return 'accelerating';
-        }
+            // Adjust velocity thresholds by category volatility velocityScale
+            const scale = catConfig.velocityScale || 1.0;
+            const viralVelThr = LIFECYCLE_THRESHOLDS.VIRAL_VELOCITY * scale;
+            const accVelThr   = LIFECYCLE_THRESHOLDS.ACCELERATING_VELOCITY * scale;
 
-        // Declining: negative velocity sustained
-        if (velocity <= LIFECYCLE_THRESHOLDS.DECLINING_VELOCITY && hoursOld > 6) {
-            return 'declining';
-        }
+            // Viral: high composite AND strong positive velocity
+            if (composite >= LIFECYCLE_THRESHOLDS.VIRAL_COMPOSITE && velocity >= viralVelThr) {
+                return 'viral';
+            }
 
-        // Emerging: above minimum threshold, positive velocity, relatively new
-        if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= 0 && hoursOld < 24) {
+            // Saturating peak detection: high composite but velocity fails scaled viral threshold -> declining
+            if (composite >= LIFECYCLE_THRESHOLDS.VIRAL_COMPOSITE && velocity < viralVelThr) {
+                return 'declining';
+            }
+
+            // Accelerating: moderate-to-high composite with strong upward momentum
+            if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= accVelThr) {
+                return 'accelerating';
+            }
+
+            // Declining: negative velocity sustained
+            if (velocity <= LIFECYCLE_THRESHOLDS.DECLINING_VELOCITY && hoursOld > 6) {
+                return 'declining';
+            }
+
+            // Emerging: above minimum threshold, positive velocity, relatively new
+            if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= 0 && hoursOld < 24) {
+                return 'emerging';
+            }
+
+            // Default: if old with low velocity but above dead threshold
+            if (velocity < 0) return 'declining';
+            return 'emerging';
+        } else {
+            // Dead: very low score and stale
+            if (composite < LIFECYCLE_THRESHOLDS.DEAD_MAX_COMPOSITE && hoursOld > LIFECYCLE_THRESHOLDS.DEAD_HOURS_STALE) {
+                return 'dead';
+            }
+
+            // Compute velocity: average delta over last 3 snapshots
+            const velocity = this.computeVelocity(history, 3, false);
+
+            // Viral: high composite AND strong positive velocity
+            if (composite >= LIFECYCLE_THRESHOLDS.VIRAL_COMPOSITE && velocity >= LIFECYCLE_THRESHOLDS.VIRAL_VELOCITY) {
+                return 'viral';
+            }
+
+            // Accelerating: moderate-to-high composite with strong upward momentum
+            if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= LIFECYCLE_THRESHOLDS.ACCELERATING_VELOCITY) {
+                return 'accelerating';
+            }
+
+            // Declining: negative velocity sustained
+            if (velocity <= LIFECYCLE_THRESHOLDS.DECLINING_VELOCITY && hoursOld > 6) {
+                return 'declining';
+            }
+
+            // Emerging: above minimum threshold, positive velocity, relatively new
+            if (composite >= LIFECYCLE_THRESHOLDS.EMERGING_MIN_COMPOSITE && velocity >= 0 && hoursOld < 24) {
+                return 'emerging';
+            }
+
+            // Default: if old with low velocity but above dead threshold
+            if (velocity < 0) return 'declining';
             return 'emerging';
         }
-
-        // Default: if old with low velocity but above dead threshold
-        if (velocity < 0) return 'declining';
-        return 'emerging';
     }
 
     /**
      * Compute average velocity delta over the last N scoreHistory snapshots.
-     * Returns the average change in composite score per snapshot interval.
+     * Supports standard rolling average or Exponentially Weighted Moving Average (EWMA) with alpha = 0.6.
      */
-    computeVelocity(history, windowSize = 3) {
+    computeVelocity(history, windowSize = 3, useEWMA = false, alpha = 0.60) {
         if (!history || history.length < 2) return 0;
 
         const recent = history.slice(-Math.min(history.length, windowSize + 1));
         if (recent.length < 2) return 0;
+
+        if (useEWMA) {
+            const deltas = [];
+            for (let i = 1; i < recent.length; i++) {
+                deltas.push((recent[i].c || 0) - (recent[i - 1].c || 0));
+            }
+            let ewma = deltas[0] || 0;
+            for (let i = 1; i < deltas.length; i++) {
+                ewma = alpha * deltas[i] + (1 - alpha) * ewma;
+            }
+            return parseFloat(ewma.toFixed(3));
+        }
 
         let totalDelta = 0;
         for (let i = 1; i < recent.length; i++) {
@@ -492,34 +546,45 @@ class TrendPredictionEngine {
         const trend = await Trend.findOne({ trendId }).maxTimeMS(2000).lean();
         if (!trend) return null;
 
+        // Feature Flag: Cutover to Calibrated Engine (defaults to true)
+        const useCalibrated = process.env.USE_CALIBRATED_ENGINE !== 'false';
+
         // Step 1: Compute lifecycle state
-        const lifecycleState = this.computeLifecycleState(trend);
+        const lifecycleState = this.computeLifecycleState(trend, useCalibrated); 
+        
+        // Shadow mode is disabled if calibrated is primary; enabled as audit if legacy is primary
+        const shadowLifecycleState = useCalibrated ? null : this.computeLifecycleState(trend, true);
 
         // Step 2: Historical confidence calibration
         const confidence = await this.computeHistoricalConfidence(trend);
+        const rawConfidence = confidence.confidenceScore;
+        const confidenceScore = useCalibrated ? this.calibrateConfidence(rawConfidence, trend.category || '_default') : rawConfidence;
 
         // Step 3: Regional migration prediction
         const predictedRegions = this.predictRegionalMigration(
-            trend, lifecycleState, confidence.confidenceScore
+            trend, lifecycleState, confidenceScore
         );
 
         // Step 4: Build explainable justification
         const predictionJustification = this.buildJustification(
-            trend, lifecycleState, confidence, predictedRegions
+            trend, lifecycleState, { ...confidence, confidenceScore }, predictedRegions
         );
+
+        const computedAt = new Date();
 
         const prediction = {
             lifecycleState,
-            confidenceScore: confidence.confidenceScore,
+            confidenceScore,
+            rawConfidence,
             matchedTrendId: confidence.matchedTrendId,
             matchProfile: confidence.matchProfile,
             historicalPeak: confidence.historicalPeak,
             predictedRegions,
             predictionJustification,
-            computedAt: new Date()
+            computedAt
         };
 
-        // Persist to MongoDB
+        // ── 1. Persist current prediction to Trend document ─────────────────
         try {
             await Trend.updateOne(
                 { trendId },
@@ -529,10 +594,76 @@ class TrendPredictionEngine {
             logger.error('[PredictionEngine] Persist error for %s: %s', trendId, err.message);
         }
 
-        // Cache for 5 minutes
+        // ── 2. Emit immutable audit record to PredictionHistory ──────────────
+        // Fire-and-forget via setImmediate — never blocks the response path.
+        // Captures scoring context at prediction time for retrospective accuracy.
+        setImmediate(async () => {
+            try {
+                const compositeScore = trend.scoring?.compositeScore || trend.trendScore || 0;
+                const velocity = this.computeVelocity(trend.scoreHistory || [], 3, useCalibrated);
+
+                await PredictionHistory.create({
+                    // Identity
+                    trendId,
+                    trendTitle:    trend.title || '',
+                    trendCategory: trend.category || '',
+
+                    // Prediction snapshot
+                    predictedState:  lifecycleState,
+                    confidenceScore: confidenceScore,
+                    rawConfidence:   rawConfidence,
+                    computedAt,
+
+                    // Shadow prediction snapshot (Phase 4C.1)
+                    shadowPredictedState: shadowLifecycleState,
+
+                    // Scoring context at prediction time
+                    compositScoreAtPrediction: compositeScore,
+                    velocityAtPrediction:      parseFloat(velocity.toFixed(3)),
+
+                    // Historical calibration inputs
+                    matchedTrendId: confidence.matchedTrendId || null,
+                    matchProfile:   confidence.matchProfile || 0,
+                    historicalPeak: confidence.historicalPeak || 0,
+
+                    // Regional predictions (frozen copy)
+                    predictedRegions,
+
+                    // Justification text
+                    predictionJustification,
+
+                    // Validation windows — all null until worker runs
+                    actualState24h: null,
+                    actualState72h: null,
+                    actualState7d:  null,
+                    actualRegions:  [],
+
+                    // Accuracy metrics — all null until evaluated
+                    lifecycleAccuracy: null,
+                    geoF1Score:        null,
+                    temporalMAE:       null,
+                    brierScore:        null,
+                    evaluatedAt:       null,
+
+                    evaluated24h: false,
+                    evaluated72h: false,
+                    evaluated7d:  false,
+
+                    engineVersion: '1.0.0'
+                });
+            } catch (histErr) {
+                // Non-fatal: prediction still served even if history write fails
+                logger.warn('[PredictionEngine] PredictionHistory write failed for %s: %s', trendId, histErr.message);
+            }
+        });
+
+        // ── 3. Cache for 5 minutes ───────────────────────────────────────────
         await cacheService.setex(cacheKey, 300, prediction);
 
-        logger.info(`[PredictionEngine] ${trendId}: ${lifecycleState} (confidence: ${confidence.confidenceScore}, regions: ${predictedRegions.length})`);
+        logger.info(
+            '[PredictionEngine] %s: %s (confidence: %s, regions: %d)',
+            trendId, lifecycleState, confidence.confidenceScore, predictedRegions.length
+        );
 
         return prediction;
     }
