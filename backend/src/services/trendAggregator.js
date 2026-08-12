@@ -283,9 +283,60 @@ class TrendAggregator {
     gnewsCache = new Map();
     gnewsInFlight = new Map();
     redditInFlight = new Map();
+    youtubeCache = new Map();
+    youtubeInFlight = new Map();
 
     /**
-     * Fetch from Reddit JSON endpoints
+     * Fallback: Fetch breaking news directly from Google News RSS feed (0 API keys, 0 quota limits)
+     */
+    async fetchGoogleNewsRSS(query, category) {
+        try {
+            const isIndia = ['Entertainment', 'Cricket', 'Gaming', 'Finance', 'Politics', 'Movies', 'Viral Videos', 'YouTube Trending', 'Influencers', 'Memes', 'Education'].includes(category);
+            const countryParam = isIndia ? 'hl=en-IN&gl=IN&ceid=IN:en' : 'hl=en-US&gl=US&ceid=US:en';
+            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&${countryParam}`;
+            
+            const response = await axios.get(rssUrl, { 
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
+                timeout: 5000 
+            });
+            const xml = response.data || '';
+            const items = xml.split('<item>').slice(1);
+
+            const articles = items.slice(0, 5).map(itemXml => {
+                const titleMatch = itemXml.match(/<title>(.*?)<\/title>/i);
+                const linkMatch = itemXml.match(/<link>(.*?)<\/link>/i);
+                const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/i);
+                const sourceMatch = itemXml.match(/<source[^>]*>(.*?)<\/source>/i);
+
+                const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, '').trim() : '';
+                const url = linkMatch ? linkMatch[1].trim() : 'https://news.google.com';
+                const source = sourceMatch ? sourceMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : 'Google News';
+                const pubDate = pubDateMatch ? new Date(pubDateMatch[1]) : new Date();
+
+                return {
+                    title,
+                    description: `Latest breaking story on ${category} from ${source}`,
+                    url,
+                    image: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&q=80&w=1000',
+                    source,
+                    publishedAt: pubDate,
+                    engagementScore: 2.5,
+                    type: 'news'
+                };
+            }).filter(a => a.title.length > 0);
+
+            if (articles.length > 0) {
+                console.log(`[Google News RSS Fallback] Successfully fetched ${articles.length} news items for category: ${category}`);
+            }
+            return articles;
+        } catch (rssError) {
+            console.error('[Google News RSS Fallback Error]:', rssError.message);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch from Reddit RSS endpoints (bypasses Cloudflare 403 API blocking on cloud IPs)
      */
     async fetchFromReddit(category) {
         const cacheKey = `reddit_${category}`;
@@ -299,37 +350,30 @@ class TrendAggregator {
             try {
                 let subreddits = ['popular', 'news', 'entertainment', 'technology', 'funny'];
 
-                // Global
+                // Category-specific subreddit routing
                 if (category === 'Healthcare') subreddits = ['health', 'medicine'];
                 else if (category === 'Environment') subreddits = ['environment', 'climate'];
                 else if (category === 'Hardware' || category === 'Gadgets') subreddits = ['hardware', 'gadgets'];
-                else if (category === 'Blockchain') subreddits = ['CryptoCurrency', 'blockchain'];
+                else if (category === 'Blockchain' || category === 'Crypto') subreddits = ['CryptoCurrency', 'Bitcoin'];
                 else if (category === 'Clean Energy') subreddits = ['energy', 'renewableEnergy'];
                 else if (category === 'AI') subreddits = ['artificial', 'machinelearning'];
                 else if (category === 'Technology') subreddits = ['technology', 'tech'];
                 else if (category === 'Startups') subreddits = ['startups', 'entrepreneur'];
                 else if (category === 'Cybersecurity') subreddits = ['cybersecurity', 'netsec'];
                 else if (category === 'Developer Ecosystem') subreddits = ['programming', 'webdev', 'coding'];
-
-                // India-Focused
-                else if (category === 'Entertainment') subreddits = ['bollywood', 'entertainment'];
+                else if (category === 'Entertainment') subreddits = ['entertainment', 'movies'];
                 else if (category === 'Cricket') subreddits = ['Cricket'];
-                else if (category === 'Gaming') subreddits = ['IndianGaming', 'gaming'];
-                else if (category === 'Finance') subreddits = ['IndiaInvestments', 'dalalstreetbets'];
-                else if (category === 'Politics') subreddits = ['india', 'indianews'];
-                if (category === 'Technology' || category === 'AI') subreddits = ['technology', 'artificial', 'hardware', 'programming'];
-                if (category === 'Crypto') subreddits = ['CryptoCurrency', 'Bitcoin'];
-                if (category === 'Cricket') subreddits = ['Cricket', 'CricketNews'];
-                if (category === 'Gaming') subreddits = ['gaming', 'Games'];
-                if (category === 'Finance') subreddits = ['personalfinance', 'investing', 'wallstreetbets'];
+                else if (category === 'Gaming') subreddits = ['gaming', 'Games'];
+                else if (category === 'Finance') subreddits = ['personalfinance', 'investing'];
+                else if (category === 'Politics') subreddits = ['news', 'worldnews'];
 
                 // Reddit Compliant User-Agent string
                 const userAgent = process.env.REDDIT_USER_AGENT || 'android:com.trendpulse.app:v1.0.0 (by /u/mdsaqibhussain123)';
 
                 const promises = subreddits.map(sub =>
-                    axios.get(`https://www.reddit.com/r/${sub}/hot.json?limit=3`, {
+                    axios.get(`https://www.reddit.com/r/${sub}/.rss`, {
                         headers: { 'User-Agent': userAgent },
-                        timeout: 3000
+                        timeout: 4000
                     })
                 );
 
@@ -337,17 +381,30 @@ class TrendAggregator {
 
                 let redditPosts = [];
                 results.forEach((res, index) => {
-                    if (res.status === 'fulfilled' && res.value.data?.data?.children) {
-                        const posts = res.value.data.data.children.map(c => ({
-                            title: c.data.title,
-                            description: c.data.selftext ? c.data.selftext.substring(0, 150) + '...' : '',
-                            url: `https://reddit.com${c.data.permalink}`,
-                            image: c.data.thumbnail && c.data.thumbnail.startsWith('http') ? c.data.thumbnail : 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1000',
-                            source: `r/${subreddits[index]}`,
-                            publishedAt: new Date(c.data.created_utc * 1000),
-                            engagementScore: Math.min(100, (c.data.score || 10) / 100),
-                            type: 'social'
-                        }));
+                    if (res.status === 'fulfilled' && typeof res.value.data === 'string') {
+                        const xml = res.value.data;
+                        const entries = xml.split('<entry>').slice(1);
+                        const posts = entries.slice(0, 3).map(entry => {
+                            const titleMatch = entry.match(/<title>(.*?)<\/title>/i);
+                            const linkMatch = entry.match(/href="([^"]+)"/i);
+                            const dateMatch = entry.match(/<updated>(.*?)<\/updated>/i);
+
+                            const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, '').trim() : '';
+                            const url = linkMatch ? linkMatch[1] : `https://reddit.com/r/${subreddits[index]}`;
+                            const pubDate = dateMatch ? new Date(dateMatch[1]) : new Date();
+
+                            return {
+                                title,
+                                description: `Trending post on r/${subreddits[index]}`,
+                                url,
+                                image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=1000',
+                                source: `r/${subreddits[index]}`,
+                                publishedAt: pubDate,
+                                engagementScore: 15,
+                                type: 'social'
+                            };
+                        }).filter(p => p.title.length > 0);
+
                         redditPosts = [...redditPosts, ...posts];
                     } else if (res.status === 'rejected') {
                         console.warn(`[Reddit Scraper] Subreddit r/${subreddits[index]} unavailable (${res.reason?.response?.status || res.reason?.message})`);
