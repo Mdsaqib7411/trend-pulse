@@ -4,10 +4,11 @@ const Trend = require('../models/Trend');
 // Initialize Gemini only if key exists to prevent crash on startup
 let genAI;
 let aiModel;
+const SELECTED_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 if (process.env.GEMINI_API_KEY) {
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // Use gemini-1.5-flash (higher free quota tier 15 RPM / 1500 RPD)
-    aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Use gemini-2.5-flash (with fallback support via env)
+    aiModel = genAI.getGenerativeModel({ model: SELECTED_GEMINI_MODEL });
 }
 
 // In-Memory Cache (Trend ID -> { data, timestamp })
